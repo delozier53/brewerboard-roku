@@ -46,10 +46,14 @@ echo "    package size: $ZIP_SIZE bytes"
 
 echo "==> Uploading to http://$TV_IP/plugin_install"
 
-# Roku's installer is fiddly: it requires HTTP digest auth and a multipart
-# form post with the field name `archive` and an action of `Install`.
-# `curl --digest --user user:pass --form` handles both.
-RESP=$(curl -sS --digest \
+# Roku's installer wants digest auth and a multipart form post with field
+# names `mysubmit=Install` + `archive=<zip>`. Using `--anyauth` instead of
+# `--digest` matters: with strict `--digest`, curl pre-emptively sends an
+# auth header but the Roku installer rejects the upload mid-stream with a
+# second 401 (manifests as "Send failure: Broken pipe" or empty response).
+# `--anyauth` does an unauth probe first, accepts the WWW-Authenticate
+# challenge, then sends the authenticated upload — which the TV accepts.
+RESP=$(curl -sS --anyauth \
     --user "$ROKU_DEV_USER:$ROKU_DEV_PASS" \
     --form "mysubmit=Install" \
     --form "archive=@$ZIP_OUT" \
