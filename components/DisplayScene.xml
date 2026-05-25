@@ -33,17 +33,18 @@
              and cleared on every render. -->
         <Group id="bodyContainer" translation="[0,0]" />
 
-        <!-- Footer marquee. The label sits at translation x=1920 (off
-             the right edge) and gets animated left to 0 - textWidth so
-             the messages glide across the bottom. -->
-        <Group id="footerClip" translation="[0,1010]">
-            <Rectangle id="footerBg" width="1920" height="70" color="0x00000033" />
-            <Label id="footerText"
-                text=""
-                translation="[1920,20]"
-                font="font:MediumSystemFont"
-                color="0xFFFFFFFF" />
-        </Group>
+        <!-- Footer marquee. footerText is a DIRECT CHILD of the scene
+             (not nested in a clipping group) so the Animation's
+             fieldToInterp="footerText.translation" path resolves
+             correctly. Previously it was nested in footerClip and the
+             animation silently failed — all messages rendered at their
+             initial positions because the interpolator never fired. -->
+        <Rectangle id="footerBg" translation="[0,1010]" width="1920" height="70" color="0x00000033" />
+        <Label id="footerText"
+            text=""
+            translation="[1920,1030]"
+            font="font:MediumSystemFont"
+            color="0xFFFFFFFF" />
 
         <Timer id="refreshTimer"
             repeat="true"
@@ -54,7 +55,7 @@
             <Vector2DFieldInterpolator
                 id="tickerInterp"
                 key="[0.0, 1.0]"
-                keyValue="[ [1920.0, 20.0], [-2000.0, 20.0] ]"
+                keyValue="[ [1920.0, 1030.0], [-2000.0, 1030.0] ]"
                 fieldToInterp="footerText.translation" />
         </Animation>
     </children>

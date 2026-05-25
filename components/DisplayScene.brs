@@ -21,7 +21,6 @@ sub init()
 
     m.rootBg = m.top.findNode("rootBg")
     m.bodyContainer = m.top.findNode("bodyContainer")
-    m.footerClip = m.top.findNode("footerClip")
     m.footerBg = m.top.findNode("footerBg")
     m.footerText = m.top.findNode("footerText")
     m.refreshTimer = m.top.findNode("refreshTimer")
@@ -280,10 +279,13 @@ end sub
 function renderHeaderArea(container as object, headers as dynamic, width as integer, config as object) as integer
     if headers = invalid or headers.Count() = 0 then return 0
 
-    headerFont = "font:LargeBoldSystemFont"
+    ' Medium bold so "Sample Header Text 1" fits the half-column width
+    ' (~440 px) without truncating. Large bold was rendering at ~26 px/char,
+    ' too wide for the slot.
+    headerFont = "font:MediumBoldSystemFont"
     headerColor = configHex(config, "header_color", "0xFFFFFFFF", 255)
 
-    rowH = 60
+    rowH = 50
     if headers.Count() >= 2 then
         ' Two columns of header text
         halfW = (width - 24) / 2  ' 24px gap between header cells
@@ -402,24 +404,18 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     end if
 
     ' --- Name + source brewery line -----------------------------------
-    ' Render as two separate Labels so we can give the source a 70%
-    ' opacity (alpha 178) like the web does, matching the photo's
-    ' "Cosmic | Skydance Brewing" treatment.
+    ' Combined into ONE Label rather than two side-by-side, because
+    ' approximating bold-large text width per character (for placing
+    ' the second label) overlapped the two on every row. The web display
+    ' uses flexbox to align them naturally — Roku has no equivalent
+    ' without measuring rendered text via roFont, which adds complexity.
+    ' Single Label trades the source-brewery opacity differentiation
+    ' (web shows it at 70% alpha) for correct, non-overlapping layout.
     nameY = m.ROW_PADDING_Y
-    nameLbl = createSimpleLabel(nameStr, textX, nameY, textWidth, nameLineH, style.nameFont, style.nameColor, "left")
+    nameDisplay = nameStr
+    if sourceStr <> "" then nameDisplay = nameStr + "  |  " + sourceStr
+    nameLbl = createSimpleLabel(nameDisplay, textX, nameY, textWidth, nameLineH, style.nameFont, style.nameColor, "left")
     row.appendChild(nameLbl)
-
-    if sourceStr <> "" then
-        ' Measure name approximate width by guessing ~14 px/char at our
-        ' bold large font. Good enough for placement — the web does this
-        ' with flexbox; we're doing it manually.
-        nameApproxW = Len(nameStr) * 16 + 8
-        if nameApproxW > textWidth - 100 then nameApproxW = textWidth - 100
-        srcText = " | " + sourceStr
-        srcColor = withAlpha(style.nameColor, 178)
-        srcLbl = createSimpleLabel(srcText, textX + nameApproxW, nameY, textWidth - nameApproxW, nameLineH, style.detailFont, srcColor, "left")
-        row.appendChild(srcLbl)
-    end if
 
     ' --- Detail line --------------------------------------------------
     if detailLine <> "" then
