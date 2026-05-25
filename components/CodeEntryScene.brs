@@ -1,55 +1,46 @@
 ' CodeEntryScene — 6-digit pin entry with a custom-rendered D-pad keypad.
 '
-' Layout (all coordinates in 1920x1080 FHD space):
+' We avoid SceneGraph's Button node (renders unreliably on some Roku
+' firmware — observed shipping as a single-pixel dot on TCL Roku TVs).
+' Each keypad cell is a Group { Rectangle + Label }. Focus is tracked
+' manually in m.focusIndex (0–11) and updated by onKeyEvent on every
+' D-pad press.
 '
-'   [_] [_] [_] [_] [_] [_]      <- 6 digit slots
-'
-'    1   2   3
-'    4   5   6
-'    7   8   9
-'   DEL  0   GO                  <- 4x3 keypad
-'
-' Why custom keypad cells instead of SceneGraph's Button node?
-' Button nodes silently mis-render text on some Roku firmware (shows up
-' as a tiny dot on TCL Roku TVs we tested). Rolling our own with
-' Rectangle + Label is more code but renders identically across devices
-' and gives us full control over focus styling.
-'
-' Focus state lives on `m.focusIndex` (0–11). onKeyEvent translates the
-' Roku remote's D-pad into row/col arithmetic and re-renders the focused
-' cell on every change.
+' Layout coordinates are in 1920x1080 FHD space. See CodeEntryScene.xml
+' for the vertical budget breakdown.
 
 sub init()
     print "[entry] init"
     m.code = ""
-    m.focusIndex = 0  ' index into KEYPAD layout below
+    m.focusIndex = 0
 
     ' --- Layout constants ----------------------------------------------
-    m.DIGIT_SLOT_WIDTH = 130
-    m.DIGIT_SLOT_HEIGHT = 160
-    m.DIGIT_SLOT_GAP = 16
+    m.DIGIT_SLOT_WIDTH = 110
+    m.DIGIT_SLOT_HEIGHT = 140
+    m.DIGIT_SLOT_GAP = 14
 
     m.KEYPAD_BTN_WIDTH = 180
-    m.KEYPAD_BTN_HEIGHT = 110
-    m.KEYPAD_BTN_GAP = 20
+    m.KEYPAD_BTN_HEIGHT = 100
+    m.KEYPAD_BTN_GAP = 15
     m.KEYPAD_COLS = 3
     m.KEYPAD_ROWS = 4
 
-    ' --- Brand palette -------------------------------------------------
-    ' Amber matches the web app's `--brand` accent. Adjust here if/when
-    ' the brand color changes — every focused element references these.
-    m.BRAND_AMBER = "0xF59E0BFF"
-    m.BRAND_AMBER_SOFT = "0xF59E0B33"  ' 20% alpha for filled-slot bg
-    m.SURFACE_DIM = "0xFFFFFF14"
-    m.SURFACE_FOCUS_BG = "0xF59E0BFF"
-    m.TEXT_ON_FOCUS = "0x0A0A0AFF"
+    ' --- Brand palette (matches tapdisplay/src/app/globals.css) --------
+    '   --color-brand:    #f7cd47   warm yellow accent
+    '   --color-app:      #384150   mid slate
+    '   --color-app-dark: #2d3545   dark slate (root bg)
+    m.BRAND_YELLOW = "0xF7CD47FF"
+    m.BRAND_YELLOW_SOFT = "0xF7CD4733"  ' 20% alpha for filled-slot tint
+    m.APP_SLATE = "0x384150FF"
+    m.APP_DARK = "0x2D3545FF"
+    m.SURFACE_DIM = "0xFFFFFF14"        ' 8% white over slate bg
+    m.TEXT_ON_FOCUS = "0x2D3545FF"      ' dark slate on yellow → readable
     m.TEXT_DEFAULT = "0xFFFFFFFF"
     m.TEXT_MUTED = "0xFFFFFFAA"
 
-    ' --- Keypad data layout --------------------------------------------
-    ' Index order is row-major: indexes 0-2 = row 0, 3-5 = row 1, etc.
-    ' Each entry has a single-char `ch` used both as the visible label
-    ' (transformed via labelFor) and the action key. "*" = DEL, "#" = GO.
+    ' --- Keypad data layout (row-major: i=0..2 = row 0, etc.) ----------
+    ' "*" sentinel = DEL, "#" sentinel = GO. Visible labels go through
+    ' labelFor() so the data stays compact.
     m.KEYPAD = [
         { ch: "1" }, { ch: "2" }, { ch: "3" },
         { ch: "4" }, { ch: "5" }, { ch: "6" },
@@ -64,9 +55,6 @@ sub init()
     refreshKeypadFocus()
 end sub
 
-' Render 6 digit slots. Each slot is Group { borderRect + bgRect + label }.
-' Border vs bg gives us a "filled" visual state (amber tint when a digit
-' lives in the slot) without redrawing the layout.
 sub buildDigitSlots()
     row = m.top.findNode("digitRow")
     m.digitSlots = []
@@ -97,8 +85,6 @@ sub buildDigitSlots()
     end for
 end sub
 
-' Render the 4x3 keypad as custom Group cells. We do NOT use Button —
-' see header comment for the firmware-compat rationale.
 sub buildKeypad()
     grid = m.top.findNode("keypadGroup")
     m.keypadCells = []
@@ -134,20 +120,17 @@ sub buildKeypad()
     end for
 end sub
 
-' Translate the internal sentinel chars to human labels.
 function labelFor(ch as string) as string
     if ch = "*" then return "DEL"
     if ch = "#" then return "GO"
     return ch
 end function
 
-' Repaint every keypad cell's bg/text colors so only the focused one is
-' highlighted. Cheap to call on every D-pad event.
 sub refreshKeypadFocus()
     for i = 0 to m.keypadCells.Count() - 1
         cell = m.keypadCells[i]
         if i = m.focusIndex then
-            cell.bg.color = m.SURFACE_FOCUS_BG
+            cell.bg.color = m.BRAND_YELLOW
             cell.lbl.color = m.TEXT_ON_FOCUS
         else
             cell.bg.color = m.SURFACE_DIM
@@ -156,9 +139,6 @@ sub refreshKeypadFocus()
     end for
 end sub
 
-' Paint each digit-slot label + bg based on current m.code. Filled slots
-' get an amber-tinted bg so the user can see at a glance how many digits
-' they've entered, even from across the room.
 sub refreshDigitSlots()
     for i = 0 to 5
         slot = m.digitSlots[i]
@@ -166,7 +146,7 @@ sub refreshDigitSlots()
         bg = slot.findNode("slotBg")
         if i < Len(m.code) then
             lbl.text = Mid(m.code, i + 1, 1)
-            bg.color = m.BRAND_AMBER_SOFT
+            bg.color = m.BRAND_YELLOW_SOFT
         else
             lbl.text = ""
             bg.color = m.SURFACE_DIM
@@ -175,11 +155,10 @@ sub refreshDigitSlots()
 end sub
 
 sub applyKeypadChar(ch as string)
+    print "[entry] applyKeypadChar ch="; ch; " code-before="; m.code
     if ch = "*" then
-        ' DEL — remove last digit
         if Len(m.code) > 0 then m.code = Left(m.code, Len(m.code) - 1)
     else if ch = "#" then
-        ' GO — submit if full, otherwise ignore
         if Len(m.code) = 6 then
             print "[entry] submitting code: "; m.code
             m.top.submittedCode = m.code
@@ -187,31 +166,42 @@ sub applyKeypadChar(ch as string)
     else
         if Len(m.code) < 6 then m.code = m.code + ch
     end if
+    print "[entry] code-after="; m.code
     refreshDigitSlots()
 end sub
 
 ' Roku remote handling. We track focus ourselves rather than relying on
-' SceneGraph's automatic focus-traversal (which doesn't work cleanly with
+' SceneGraph's automatic focus traversal (which doesn't work cleanly with
 ' raw Group children).
+'
+' Key naming across Roku firmware versions is inconsistent — the "OK"
+' button has been seen as "OK", "ok", and "select" — so we accept all
+' three variants. Every key is also `print`-ed so telnet 8085 shows
+' exactly what the remote is sending if anything misbehaves.
 function onKeyEvent(key as string, press as boolean) as boolean
+    print "[entry] onKeyEvent key="; key; " press="; press
     if not press then return false
 
     row = m.focusIndex \ m.KEYPAD_COLS
     col = m.focusIndex - row * m.KEYPAD_COLS
 
-    if key = "up" then
+    lcKey = LCase(key)
+    if lcKey = "up" then
         if row > 0 then row = row - 1
-    else if key = "down" then
+    else if lcKey = "down" then
         if row < m.KEYPAD_ROWS - 1 then row = row + 1
-    else if key = "left" then
+    else if lcKey = "left" then
         if col > 0 then col = col - 1
-    else if key = "right" then
+    else if lcKey = "right" then
         if col < m.KEYPAD_COLS - 1 then col = col + 1
-    else if key = "OK" or key = "play" then
+    else if lcKey = "ok" or lcKey = "select" or lcKey = "enter" or lcKey = "play" then
         applyKeypadChar(m.KEYPAD[m.focusIndex].ch)
         return true
-    else if key = "back" then
-        ' Treat BACK as a quick delete shortcut.
+    else if lcKey = "back" then
+        ' Quick delete on BACK — pressing it once clears the most recent
+        ' digit. (MainScene handles "back to code entry" from the
+        ' DisplayScene; here in the entry scene it would just exit the
+        ' channel, which is a worse UX than backspacing.)
         applyKeypadChar("*")
         return true
     else

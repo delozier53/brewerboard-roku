@@ -9,7 +9,7 @@ subtitle=Brewery taplist display
 ## "About" once the channel is published.
 major_version=1
 minor_version=0
-build_version=00002
+build_version=00003
 
 ## Render at full 1080p. Roku scales down for HD/SD TVs automatically.
 ## Without `fhd`, SceneGraph nodes default to 1280x720 coordinate space and
@@ -26,7 +26,7 @@ splash_screen_hd=pkg:/images/splash_hd.png
 splash_screen_fhd=pkg:/images/splash_fhd.png
 
 ## Background color shown before the splash image loads (RGB hex).
-splash_color=#0a0a0a
+splash_color=#2d3545
 splash_min_time=1500
 
 ## Category in the Roku Channel Store. "TV Apps" is for live/utility apps;

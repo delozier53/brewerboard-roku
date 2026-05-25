@@ -1,17 +1,16 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-  Code entry screen — rewritten to ditch the built-in Button node, which
-  doesn't render its text reliably across Roku firmware versions (was
-  showing up as a tiny dot on a TCL Roku TV). Instead we draw each keypad
-  cell as a Group of Rectangle + Label and handle D-pad focus + OK press
-  in BrightScript via onKeyEvent.
+  Code entry screen — custom-rendered keypad (Roku's Button node renders
+  unreliably across firmware). Layout retuned so the keypad fits inside
+  1080p without overlapping the help text at the bottom.
 
-  Visual hierarchy mirrors the web /display entry page:
-    - BrewerBoard logo (top center)
-    - Title + tagline
-    - 6 large digit slots
-    - 4x3 numeric keypad with custom focusable cells
-    - Help text (single short line)
+  Vertical budget (1920x1080 FHD):
+    60- 165  logo poster      (105 tall)
+   185- 245  title label
+   265- 305  tagline label
+   335- 475  digit-slot row   (140 tall)
+   510- 955  keypad           (4 rows of 100 + 3 gaps of 15 = 445 tall)
+   985-1015  help label
 -->
 <component name="CodeEntryScene" extends="Group">
 
@@ -22,40 +21,41 @@
     <script type="text/brightscript" uri="pkg:/components/CodeEntryScene.brs" />
 
     <children>
-        <!-- Channel logo (reuses the FHD icon we ship for the home screen) -->
         <Poster id="logoPoster"
             uri="pkg:/images/icon_fhd.png"
-            translation="[890,80]"
+            translation="[890,60]"
             width="140"
             height="105"
             loadDisplayMode="scaleToFit" />
 
         <Label id="titleLabel"
             text="BrewerBoard"
-            translation="[660,210]"
-            width="600"
+            translation="[560,185]"
+            width="800"
             horizAlign="center"
             font="font:LargeBoldSystemFont"
             color="0xFFFFFFFF" />
 
         <Label id="taglineLabel"
             text="Enter your 6-digit screen code"
-            translation="[560,290]"
+            translation="[560,265]"
             width="800"
             horizAlign="center"
             font="font:MediumSystemFont"
-            color="0xFFFFFF99" />
+            color="0xFFFFFFAA" />
 
-        <!-- Digit-slot row, populated by buildDigitSlots() -->
-        <Group id="digitRow" translation="[510,380]" />
+        <!-- Digit slot row, populated by buildDigitSlots() at translation
+             x=595 so a 730px-wide row centers on the 1920 screen. -->
+        <Group id="digitRow" translation="[595,335]" />
 
-        <!-- Custom keypad grid, populated by buildKeypad() -->
-        <Group id="keypadGroup" translation="[660,580]" />
+        <!-- Keypad grid, populated by buildKeypad() at translation x=670
+             so a 580px-wide 3-column grid centers on the screen. -->
+        <Group id="keypadGroup" translation="[670,510]" />
 
         <Label id="helpLabel"
             text="D-pad to move, OK to select"
-            translation="[460,1010]"
-            width="1000"
+            translation="[560,985]"
+            width="800"
             horizAlign="center"
             color="0xFFFFFF55" />
     </children>

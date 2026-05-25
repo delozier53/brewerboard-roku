@@ -18,7 +18,8 @@
         <!-- Full-screen container the active sub-scene gets added to. The
              dark background keeps the TV from flashing white between scene
              swaps. -->
-        <Rectangle id="rootBg" width="1920" height="1080" color="0x0A0A0AFF" />
+        <!-- Brand dark — matches --color-app-dark (#2d3545) in the web app -->
+        <Rectangle id="rootBg" width="1920" height="1080" color="0x2D3545FF" />
         <Group id="sceneHost" translation="[0,0]" />
     </children>
 </component>
