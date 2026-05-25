@@ -154,15 +154,18 @@ sub renderBeerList(beers as dynamic, breweryLogoUrl as dynamic)
     end if
 
     ' Compute each row's height once (driven by content lines) and lay
-    ' rows out vertically by accumulating Y.
+    ' rows out vertically by accumulating Y. buildBeerRow returns
+    ' { node, height } because SceneGraph's Group node has no settable
+    ' `height` field — assigning to it is silently dropped, and reading
+    ' it back returns Invalid (which would crash this loop).
     y = 0
     for i = 0 to beers.Count() - 1
         beer = beers[i]
         isLast = (i = beers.Count() - 1)
-        row = buildBeerRow(beer, breweryLogoUrl, isLast)
-        row.translation = [0, y]
-        m.beerList.appendChild(row)
-        y = y + row.height
+        result = buildBeerRow(beer, breweryLogoUrl, isLast)
+        result.node.translation = [0, y]
+        m.beerList.appendChild(result.node)
+        y = y + result.height
         ' Avoid running off the bottom of the screen. Beer area is
         ' y=140..1030 = 890px tall.
         if y > 880 then exit for
@@ -322,8 +325,11 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         row.appendChild(divider)
     end if
 
-    row.height = rowHeight  ' caller stacks by this
-    return row
+    ' Return both the node and its computed height. We can't stash the
+    ' height on the Group itself — SceneGraph silently drops writes to
+    ' unknown fields, so `row.height = rowHeight` would leave the height
+    ' Invalid when read back in renderBeerList.
+    return { node: row, height: rowHeight }
 end function
 
 ' Filter sizes by visible_ids if the operator has hidden some.
