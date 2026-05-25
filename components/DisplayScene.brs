@@ -308,6 +308,14 @@ sub renderImagePanel(layout as object)
     end if
 
     poster = CreateObject("roSGNode", "Poster")
+    ' loadWidth/loadHeight tell Roku to DECODE the image at this size,
+    ' not at its native size. Critical for large source images: Roku
+    ' TCL TVs silently drop textures larger than 2048×2048, so a
+    ' 3334×3334 brewery-logo JPG (real-world example from logs) loads
+    ' but never renders. Decoding at the display size keeps us safely
+    ' below the GPU texture cap on every device.
+    poster.loadWidth = slot.w
+    poster.loadHeight = slot.h
     poster.uri = images[0]
     poster.translation = [slot.x, slot.y]
     poster.width = slot.w
@@ -537,10 +545,24 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         if pricesList.Count() > 0 then pricesEnabled = true
     end if
 
+    ' Adapt pricesW to the actual rowWidth so a 3-col layout doesn't
+    ' have a price column that eats the whole row, and a 1-col layout
+    ' isn't artificially cramped. Tuned so:
+    '   wide row (1-col)    → 360 px (fits "$10.50" comfortably 2-up)
+    '   medium row (2-col)  → 280 px
+    '   narrow row (3-col)  → 200 px (tight; 1-up may be all that fits)
     if pricesEnabled then
-        pricesX = rowWidth - m.PRICES_COL_W
+        if rowWidth >= 1000 then
+            pricesW = 360
+        else if rowWidth >= 700 then
+            pricesW = 280
+        else
+            pricesW = 200
+        end if
+        pricesX = rowWidth - pricesW
         textRight = pricesX - m.PRICES_GAP
     else
+        pricesW = 0
         pricesX = rowWidth
         textRight = rowWidth
     end if
@@ -634,6 +656,11 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     logoCenterY = topPad + Int((contentH - logoSize) / 2)
     if labelSrc <> "" then
         poster = CreateObject("roSGNode", "Poster")
+        ' Beer label images can also be huge (>2048 px) — same TCL GPU
+        ' cap applies. Decode at the display size to stay under the
+        ' texture limit.
+        poster.loadWidth = logoSize
+        poster.loadHeight = logoSize
         poster.uri = labelSrc
         poster.translation = [leftX, logoCenterY]
         poster.width = logoSize
@@ -675,7 +702,7 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
 
     ' --- Size + price grid (right) — 2-up side-by-side -----------------
     if pricesEnabled then
-        renderPriceGrid(row, pricesList, pricesX, m.PRICES_COL_W, topPad, priceCellH, style)
+        renderPriceGrid(row, pricesList, pricesX, pricesW, topPad, priceCellH, style)
     end if
 
     ' --- Per-row divider ----------------------------------------------
@@ -720,12 +747,14 @@ sub renderPriceGrid(row as object, sizes as object, pricesX as integer, pricesW 
 end sub
 
 sub renderPriceCell(row as object, size as object, x as integer, y as integer, w as integer, h as integer, style as object)
-    ' Split each cell into size-label (right-aligned ~55%) + price
-    ' (left-aligned remainder). Labels right-align so "Pint" and "12oz"
-    ' don't visually drift apart in a column.
-    labelW = Int(w * 0.55)
+    ' Split each cell so the size label gets a fixed ~60 px (enough for
+    ' "12oz" / "16oz" / "Pint" in MediumSystemFont) and the price gets
+    ' the rest. Earlier 55/45 split was leaving only ~50 px for the
+    ' price, which truncated anything ≥ "$10.00" with an ellipsis.
+    labelW = 60
     gap = 6
     priceW = w - labelW - gap
+    if priceW < 50 then priceW = 50  ' don't let it collapse on very narrow rows
 
     sizeLbl = createSimpleLabel(asString(size.label), x, y, labelW, h, style.sizeFont, style.nameColor, "right")
     row.appendChild(sizeLbl)
