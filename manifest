@@ -9,7 +9,7 @@ subtitle=Brewery taplist display
 ## "About" once the channel is published.
 major_version=1
 minor_version=0
-build_version=00021
+build_version=00022
 
 ## Render at full 1080p. Roku scales down for HD/SD TVs automatically.
 ## Without `fhd`, SceneGraph nodes default to 1280x720 coordinate space and

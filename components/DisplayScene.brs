@@ -294,15 +294,63 @@ end function
 
 sub renderImagePanel(layout as object)
     slot = layout.imageSlot
+
+    ' Filter out URLs that Roku's Poster can't render (videos). The
+    ' web's ColumnImageSlideshow does the same — videos need a Video
+    ' node with content metadata, which we haven't wired up yet.
+    images = []
+    for each url in layout.imageUrls
+        if not isVideoUrl(url) then images.push(url)
+    end for
+    if images.Count() = 0 then
+        m.slideshowTimer.control = "stop"
+        return
+    end if
+
     poster = CreateObject("roSGNode", "Poster")
-    poster.uri = layout.imageUrls[0]
+    poster.uri = images[0]
     poster.translation = [slot.x, slot.y]
     poster.width = slot.w
     poster.height = slot.h
     poster.loadDisplayMode = "scaleToFit"
     m.bodyContainer.appendChild(poster)
-    ' Slideshow rotation across multiple imageUrls = v4 follow-up.
+
+    ' Set up rotation when the operator has multiple images in the slot.
+    if images.Count() > 1 then
+        m.slideshowImages = images
+        m.slideshowPoster = poster
+        m.slideshowIndex = 0
+        duration = intField(m.config, "column_image_duration_seconds", 8)
+        if duration < 2 then duration = 2
+        if duration > 60 then duration = 60
+        m.slideshowTimer.duration = duration
+        m.slideshowTimer.control = "start"
+    else
+        m.slideshowImages = []
+        m.slideshowPoster = invalid
+        m.slideshowTimer.control = "stop"
+    end if
 end sub
+
+sub onSlideshowTick()
+    if m.slideshowImages = invalid or m.slideshowImages.Count() <= 1 then return
+    if m.slideshowPoster = invalid then return
+    m.slideshowIndex = (m.slideshowIndex + 1) mod m.slideshowImages.Count()
+    m.slideshowPoster.uri = m.slideshowImages[m.slideshowIndex]
+end sub
+
+' True for file extensions Roku Poster can't render (these need Video
+' node + content-meta). Matches the web's isVideoUrl helper.
+function isVideoUrl(url as string) as boolean
+    if url = invalid or Len(url) < 5 then return false
+    lower = LCase(url)
+    if Right(lower, 4) = ".mp4" then return true
+    if Right(lower, 5) = ".webm" then return true
+    if Right(lower, 4) = ".mov" then return true
+    if Right(lower, 4) = ".avi" then return true
+    if Right(lower, 4) = ".mkv" then return true
+    return false
+end function
 
 ' ----- Tap list column ----------------------------------------------------
 
