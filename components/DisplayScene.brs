@@ -63,7 +63,12 @@ end sub
 sub fetchDisplayData()
     code = m.top.screenCode
     if code = invalid or Len(code) <> 6 then return
-    url = m.API_BASE + "/api/display/" + code
+    ' Cache-bust with a timestamp query param so no intermediary
+    ' (Vercel edge, ISP transparent cache, roUrlTransfer's own pool)
+    ' can hand us a stale response. The server treats unknown query
+    ' params as no-ops.
+    cacheBust = "?_t=" + (CreateObject("roDateTime").AsSeconds()).toStr()
+    url = m.API_BASE + "/api/display/" + code + cacheBust
     print "[display] fetching "; url
 
     task = CreateObject("roSGNode", "DisplayLoaderTask")
@@ -93,6 +98,17 @@ end sub
 sub renderPayload(payload as object)
     config = payload.screen.config
     m.config = config
+
+    ' Diagnostic prints so `nc <tv-ip> 8085` shows exactly what config
+    ' the channel just received. If the operator edited something in
+    ' the dashboard and we're still showing the old value, these
+    ' prints reveal whether the API is returning stale data or whether
+    ' the Roku is rendering fresh data incorrectly.
+    headerStr = ""
+    if payload.headers <> invalid and payload.headers.Count() > 0 and payload.headers[0].text <> invalid then headerStr = payload.headers[0].text
+    colImgCount = 0
+    if config.column_image_ids <> invalid then colImgCount = config.column_image_ids.Count()
+    print "[display] render: cols="; config.columns; " bg="; config.background_color; " header[0]="; headerStr; " column_image_ids="; colImgCount
 
     m.rootBg.color = configHex(config, "background_color", "0x1C1917FF", 255)
 

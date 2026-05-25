@@ -23,6 +23,8 @@ sub runFetch()
     transfer.InitClientCertificates()
     transfer.EnableEncodings(true)
     transfer.AddHeader("Accept", "application/json")
+    transfer.AddHeader("Cache-Control", "no-cache")
+    transfer.AddHeader("Pragma", "no-cache")
     transfer.SetMessagePort(CreateObject("roMessagePort"))
     transfer.RetainBodyOnError(true)
 
