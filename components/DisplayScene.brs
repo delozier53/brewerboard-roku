@@ -173,21 +173,20 @@ function computeLayout(config as object, images as dynamic) as object
         if config.column_image_position = "left" then imagePos = "left"
     end if
 
-    ' Carve the body width into (image panel) + (beer columns).
+    ' Carve the body width into (image panel) + (beer columns). All slot
+    ' coordinates are RELATIVE TO bodyContainer (which is itself already
+    ' translated to y=BODY_TOP in the XML). Earlier versions had
+    ' slot.y = m.BODY_TOP and double-counted the offset, pushing the
+    ' image panel and beer columns down by 120px and partially clipping
+    ' them into the footer.
     totalW = m.SCREEN_W - 2 * m.SIDE_MARGIN
-    ' Number of slot-divisions (image counts as 1 slot in N-col layouts).
     slotCount = columns
-    if hasImagePanel then
-        beerColCount = columns - 1
-    else
-        beerColCount = columns
-    end if
     slotW = (totalW - (slotCount - 1) * m.COLUMN_GAP) / slotCount
 
     slots = []
     x = m.SIDE_MARGIN
     for i = 0 to slotCount - 1
-        slots.push({ x: x, y: m.BODY_TOP, w: slotW, h: m.BODY_HEIGHT })
+        slots.push({ x: x, y: 0, w: slotW, h: m.BODY_HEIGHT })
         x = x + slotW + m.COLUMN_GAP
     end for
 
@@ -275,11 +274,14 @@ end sub
 sub renderBeerColumn(beers as dynamic, breweryLogoUrl as dynamic, slot as object)
     if beers = invalid or beers.Count() = 0 then return
 
+    ' container's translation positions it within bodyContainer; beer
+    ' rows then start at y=0 inside the container. slot coords are
+    ' bodyContainer-relative (see computeLayout for the rationale).
     container = CreateObject("roSGNode", "Group")
-    container.translation = [slot.x, 0]
+    container.translation = [slot.x, slot.y]
     m.bodyContainer.appendChild(container)
 
-    y = slot.y - m.BODY_TOP  ' relative to bodyContainer
+    y = 0
     for i = 0 to beers.Count() - 1
         beer = beers[i]
         isLast = (i = beers.Count() - 1)
@@ -287,7 +289,7 @@ sub renderBeerColumn(beers as dynamic, breweryLogoUrl as dynamic, slot as object
         result.node.translation = [0, y]
         container.appendChild(result.node)
         y = y + result.height
-        if y > slot.y + slot.h then exit for
+        if y > slot.h then exit for
     end for
 end sub
 
