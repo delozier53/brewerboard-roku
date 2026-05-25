@@ -1,20 +1,11 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-  DisplayScene — taplist render. Layout follows the web BeerCard:
-    [label]  TAP# Beer Name                          Size  $X.XX
-             Style · ABV% · IBU IBU                  Size  $X.XX
-    ────────────────────────────────────────────────────────────
+  DisplayScene — taplist render. Matches the web display's "image panel +
+  taplist column" layout when the operator has columns=2 + a column
+  image set, and reads colors / visibility toggles from screen.config.
 
-  All colors come from the screen config (config.background_color,
-  font_color, price_color, beer_name_color, beer_detail_color,
-  header_color, footer_color). All visibility toggles (show_tap_numbers,
-  show_style, show_abv, show_ibu, show_label_image, show_description,
-  show_row_dividers) are respected.
-
-  v2 gaps (still): custom Google fonts (Roku can't load remote fonts —
-  needs shipped TTF), background image with overlay, footer ticker
-  animation (static text for now), tags (New/Featured/Coming Soon),
-  2+ column layouts, auto-fit scaling.
+  Layout decisions all live in computeLayout() in the .brs file — XML
+  just exposes the nodes we mutate at runtime.
 -->
 <component name="DisplayScene" extends="Group">
 
@@ -26,47 +17,53 @@
     <script type="text/brightscript" uri="pkg:/components/DisplayScene.brs" />
 
     <children>
-        <!-- Full-screen bg whose color we override from `screen.config.background_color`
-             once a payload arrives. Sits behind everything else. -->
+        <!-- Full-screen bg whose color we override from
+             screen.config.background_color once a payload arrives. -->
         <Rectangle id="rootBg" width="1920" height="1080" color="0x1C1917FF" />
 
-        <!-- Header bar: brewery logo (left), header text (center), status (right). -->
-        <Rectangle id="headerBg" width="1920" height="110" color="0x00000040" />
-        <Poster id="breweryLogo"
-            translation="[40,20]"
-            width="70"
-            height="70"
-            loadDisplayMode="scaleToFit" />
+        <!-- Header bar: just centered text. Dropped the brewery logo
+             (web display doesn't show one in the header) and the "Live"
+             status indicator (was operator-distracting noise). -->
+        <Rectangle id="headerBg" width="1920" height="100" color="0x00000040" />
         <Label id="headerText"
             text=""
-            translation="[460,30]"
-            width="1000"
+            translation="[0,30]"
+            width="1920"
             horizAlign="center"
-            font="font:LargeBoldSystemFont"
+            font="font:LargestBoldSystemFont"
             color="0xFFFFFFFF" />
-        <Label id="connectionLabel"
-            text=""
-            translation="[1700,45]"
-            width="180"
-            horizAlign="right"
-            color="0xFFFFFF55" />
 
-        <!-- Beer rows populated by renderBeerList(). 40px side margins. -->
-        <Group id="beerList" translation="[40,140]" />
+        <!-- Body container — image panel and/or beer columns get appended
+             here at runtime. Cleared on every render. -->
+        <Group id="bodyContainer" translation="[0,120]" />
 
-        <!-- Static footer text (web has a scrolling ticker; that's a v3 feature). -->
-        <Rectangle id="footerBg" translation="[0,1030]" width="1920" height="50" color="0x00000040" />
-        <Label id="footerText"
-            text=""
-            translation="[40,1040]"
-            width="1840"
-            horizAlign="center"
-            color="0xFFFFFFAA" />
+        <!-- Footer bar + ticker. The Label sits inside a clipping Group
+             so we can scroll the text off-screen on both sides. -->
+        <Rectangle id="footerBg" translation="[0,1020]" width="1920" height="60" color="0x00000040" />
+        <Group id="footerClip" translation="[0,1020]" >
+            <Label id="footerText"
+                text=""
+                translation="[1920,15]"
+                font="font:MediumSystemFont"
+                color="0xFFFFFFFF" />
+        </Group>
 
         <!-- Polling timer — fires every 30s to refetch the payload. -->
         <Timer id="refreshTimer"
             repeat="true"
             duration="30"
             control="start" />
+
+        <!-- Ticker animation. Translates the footer label horizontally
+             from off-screen-right to off-screen-left, then loops. We
+             rebuild the Vector2DFieldInterpolator's keyValue at runtime
+             once we know the rendered text width. -->
+        <Animation id="tickerAnim" duration="20" repeat="true" easeFunction="linear">
+            <Vector2DFieldInterpolator
+                id="tickerInterp"
+                key="[0.0, 1.0]"
+                keyValue="[ [1920.0, 15.0], [-2000.0, 15.0] ]"
+                fieldToInterp="footerText.translation" />
+        </Animation>
     </children>
 </component>

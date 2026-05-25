@@ -1,53 +1,65 @@
-' DisplayScene controller — taplist render that mirrors the web BeerCard:
+' DisplayScene — taplist render that mirrors the web display's structure:
 '
-'   [label]  TAP# Beer Name                          Size1 $X.XX
-'            Style · ABV% · IBU IBU                  Size2 $X.XX
-'   ────────────────────────────────────────────────────────────
+'   Header text (centered, no logo / no "Live" status)
+'   ┌────────────────────────┬─────────────────────────────────┐
+'   │                        │  [img] TAP# Beer Name   $X.XX   │
+'   │   Optional             │        Style · ABV · IBU        │
+'   │   image panel          │  ─────────────────────────────  │
+'   │   (slideshow if        │  [img] TAP# Beer Name   $X.XX   │
+'   │    multiple images)    │        ...                      │
+'   │                        │                                 │
+'   └────────────────────────┴─────────────────────────────────┘
+'                Scrolling ticker footer ──────────────────►
 '
-' All colors and visibility toggles come from the screen config. See the
-' XML for the v2 gap list. Polls /api/display/[code] every 30s; sets
-' requestSignOut on a 404 so the user can re-pair.
-
-' API base lives on `m` so it's easy to swap for a Vercel preview or
-' http://<your-mac-ip>:3000 when iterating locally.
+' computeLayout() reads screen.config (columns, column_image_position,
+' column_image_ids) and screen images and decides the final layout
+' (image panel left/right, beer columns split, or single full-width
+' column). Everything in the body container is rebuilt on each
+' renderPayload call — cheap and avoids partial-render artifacts.
 
 sub init()
     print "[display] init"
     m.API_BASE = "https://brewerboard.com"
 
     m.rootBg = m.top.findNode("rootBg")
-    m.headerBg = m.top.findNode("headerBg")
-    m.breweryLogo = m.top.findNode("breweryLogo")
     m.headerText = m.top.findNode("headerText")
-    m.connectionLabel = m.top.findNode("connectionLabel")
-    m.beerList = m.top.findNode("beerList")
+    m.bodyContainer = m.top.findNode("bodyContainer")
+    m.footerClip = m.top.findNode("footerClip")
     m.footerText = m.top.findNode("footerText")
     m.refreshTimer = m.top.findNode("refreshTimer")
+    m.tickerAnim = m.top.findNode("tickerAnim")
+    m.tickerInterp = m.top.findNode("tickerInterp")
 
-    ' Layout constants (1920x1080 FHD coords). Beer-row column widths add
-    ' up to 1840 = screen width minus 40px margins each side.
-    m.ROW_PADDING_Y = 14
-    m.ROW_GAP = 6
-    m.LABEL_BOX = 90              ' square label/logo on the left
-    m.LABEL_RIGHT_GAP = 18
-    m.PRICES_BOX_WIDTH = 320      ' right-anchored prices column
-    m.PRICES_LEFT_GAP = 18
+    ' --- Layout constants ----------------------------------------------
+    m.SCREEN_W = 1920
+    m.SCREEN_H = 1080
+    m.SIDE_MARGIN = 40
+    m.COLUMN_GAP = 30
+    m.BODY_TOP = 120
+    m.BODY_BOTTOM = 1020      ' just above the footer bg
+    m.BODY_HEIGHT = m.BODY_BOTTOM - m.BODY_TOP
 
-    ' Font sizes — Roku doesn't auto-fit yet, so we hardcode TV-readable
-    ' values. Web values (18 / 13 / 15) are tiny because they get scaled
-    ' up via the auto-fit hook; we skip that for v2.
+    ' Per-beer-row geometry (small image to keep the row tighter than v2).
+    m.ROW_PADDING_Y = 10
+    m.ROW_GAP = 4
+    m.LABEL_BOX = 80
+    m.LABEL_RIGHT_GAP = 16
+    m.PRICES_BOX_WIDTH = 260
+    m.PRICES_LEFT_GAP = 16
+
+    ' Roku system-font alias sizes — see makeFont() comments for the full
+    ' mapping. These pixel numbers are approximate (used only to size
+    ' label heights so multi-line rows stack correctly).
     m.NAME_FONT_SIZE = 36
     m.DETAIL_FONT_SIZE = 24
     m.PRICE_FONT_SIZE = 28
     m.SIZE_LABEL_FONT_SIZE = 20
+    m.FOOTER_FONT_SIZE = 24
 
-    ' Track active payload so a re-render uses the latest config.
     m.config = invalid
 
     m.top.observeField("screenCode", "onScreenCodeSet")
     m.refreshTimer.observeField("fire", "onRefreshTimerFired")
-
-    setStatus("Connecting…")
 end sub
 
 sub onScreenCodeSet()
@@ -75,110 +87,220 @@ sub onLoaderResponse()
     if m.activeTask = invalid then return
     resp = m.activeTask.response
     m.activeTask = invalid
-    if resp = invalid then
-        setStatus("No response")
-        return
-    end if
+    if resp = invalid then return
 
     if resp.status = 404 then
-        print "[display] 404, signing out"
         m.top.requestSignOut = true
         return
     end if
-    if resp.status < 200 or resp.status >= 300 then
-        setStatus("HTTP " + StrI(resp.status).Trim())
-        return
-    end if
+    if resp.status < 200 or resp.status >= 300 then return
 
     payload = ParseJson(resp.body)
-    if payload = invalid then
-        setStatus("Invalid JSON")
-        return
-    end if
-
+    if payload = invalid then return
     renderPayload(payload)
-    setStatus("Live")
 end sub
 
 sub renderPayload(payload as object)
-    ' --- Apply config colors -----------------------------------------
     config = payload.screen.config
     m.config = config
 
-    bgColor = configHex(config, "background_color", "0x1C1917FF", 255)
-    m.rootBg.color = bgColor
+    ' --- Root colors ---------------------------------------------------
+    m.rootBg.color = configHex(config, "background_color", "0x1C1917FF", 255)
 
-    ' --- Header --------------------------------------------------------
-    if payload.brewery_logo_url <> invalid and payload.brewery_logo_url <> "" then
-        m.breweryLogo.uri = payload.brewery_logo_url
-    end if
-
-    ' Header text: prefer the operator's configured header texts (first
-    ' one for v2 — multi-header grids land later); fall back to screen
-    ' name so a screen without headers still labels itself.
+    ' --- Header text ---------------------------------------------------
+    headerStr = ""
     if payload.headers <> invalid and payload.headers.Count() > 0 and payload.headers[0].text <> invalid then
-        m.headerText.text = payload.headers[0].text
+        headerStr = payload.headers[0].text
     else if payload.screen.name <> invalid then
-        m.headerText.text = payload.screen.name
+        headerStr = payload.screen.name
     end if
+    m.headerText.text = headerStr
     m.headerText.color = configHex(config, "header_color", "0xFFFFFFFF", 255)
 
-    ' --- Footer --------------------------------------------------------
-    if payload.footers <> invalid and payload.footers.Count() > 0 then
-        parts = []
-        for each f in payload.footers
-            if f.text <> invalid then parts.push(f.text)
-        end for
-        m.footerText.text = joinStrings(parts, "   •   ")
-    else
-        m.footerText.text = ""
-    end if
-    m.footerText.color = configHex(config, "footer_color", "0xFFFFFFAA", 170)
+    ' --- Body: image panel + beer column(s) ----------------------------
+    clearGroup(m.bodyContainer)
+    layout = computeLayout(config, payload.images)
 
-    ' --- Beer rows -----------------------------------------------------
-    renderBeerList(payload.beers, payload.brewery_logo_url)
+    ' Render image panel first (back of z-order if it overlaps anything;
+    ' it shouldn't, since columns don't overlap).
+    if layout.hasImagePanel then
+        renderImagePanel(layout)
+    end if
+
+    ' Beer columns. Each "column slot" gets a slice of the beer array.
+    beerColumns = splitBeers(payload.beers, layout)
+    for ci = 0 to beerColumns.Count() - 1
+        slot = layout.beerSlots[ci]
+        renderBeerColumn(beerColumns[ci], payload.brewery_logo_url, slot)
+    end for
+
+    ' --- Footer ticker -------------------------------------------------
+    renderFooter(payload.footers, config)
 end sub
 
-sub renderBeerList(beers as dynamic, breweryLogoUrl as dynamic)
-    while m.beerList.getChildCount() > 0
-        m.beerList.removeChild(m.beerList.getChild(0))
-    end while
+' ----- Layout computation -------------------------------------------------
+'
+' Returns:
+'   {
+'     columns:       1 | 2 | 3
+'     hasImagePanel: bool
+'     imagePos:      "left" | "right"
+'     imageUrls:     [string]
+'     imageSlot:     { x, y, w, h }   (only when hasImagePanel)
+'     beerSlots:     [{ x, y, w, h }] (one per beer column)
+'   }
+function computeLayout(config as object, images as dynamic) as object
+    columns = intField(config, "columns", 1)
+    if columns < 1 then columns = 1
+    if columns > 3 then columns = 3
 
-    if beers = invalid or beers.Count() = 0 then
-        empty = CreateObject("roSGNode", "Label")
-        empty.text = "No beers on tap yet."
-        empty.color = configHex(m.config, "font_color", "0xFFFFFFAA", 170)
-        empty.font = "font:MediumSystemFont"
-        m.beerList.appendChild(empty)
-        return
+    ' Collect image URLs the operator wants in the column-image slot.
+    imageUrls = []
+    if config.column_image_ids <> invalid and config.column_image_ids.Count() > 0 then
+        for each id in config.column_image_ids
+            url = findImageUrl(images, id)
+            if url <> "" then imageUrls.push(url)
+        end for
+    end if
+    if imageUrls.Count() = 0 and config.right_column_image_id <> invalid and config.right_column_image_id <> "" then
+        url = findImageUrl(images, config.right_column_image_id)
+        if url <> "" then imageUrls.push(url)
     end if
 
-    ' Compute each row's height once (driven by content lines) and lay
-    ' rows out vertically by accumulating Y. buildBeerRow returns
-    ' { node, height } because SceneGraph's Group node has no settable
-    ' `height` field — assigning to it is silently dropped, and reading
-    ' it back returns Invalid (which would crash this loop).
-    y = 0
+    hasImagePanel = (imageUrls.Count() > 0) and (columns >= 2)
+    imagePos = "right"
+    if config.column_image_position <> invalid then
+        if config.column_image_position = "left" then imagePos = "left"
+    end if
+
+    ' Carve the body width into (image panel) + (beer columns).
+    totalW = m.SCREEN_W - 2 * m.SIDE_MARGIN
+    ' Number of slot-divisions (image counts as 1 slot in N-col layouts).
+    slotCount = columns
+    if hasImagePanel then
+        beerColCount = columns - 1
+    else
+        beerColCount = columns
+    end if
+    slotW = (totalW - (slotCount - 1) * m.COLUMN_GAP) / slotCount
+
+    slots = []
+    x = m.SIDE_MARGIN
+    for i = 0 to slotCount - 1
+        slots.push({ x: x, y: m.BODY_TOP, w: slotW, h: m.BODY_HEIGHT })
+        x = x + slotW + m.COLUMN_GAP
+    end for
+
+    layout = {
+        columns: columns,
+        hasImagePanel: hasImagePanel,
+        imagePos: imagePos,
+        imageUrls: imageUrls
+    }
+
+    if hasImagePanel then
+        if imagePos = "left" then
+            layout.imageSlot = slots[0]
+            layout.beerSlots = []
+            for i = 1 to slots.Count() - 1
+                layout.beerSlots.push(slots[i])
+            end for
+        else
+            layout.imageSlot = slots[slots.Count() - 1]
+            layout.beerSlots = []
+            for i = 0 to slots.Count() - 2
+                layout.beerSlots.push(slots[i])
+            end for
+        end if
+    else
+        layout.beerSlots = slots
+    end if
+
+    return layout
+end function
+
+function findImageUrl(images as dynamic, id as string) as string
+    if images = invalid then return ""
+    for each img in images
+        if img.id = id then return img.url
+    end for
+    return ""
+end function
+
+' Split the beer array into `beerSlots.Count()` chunks, in order. Web
+' display does a column-major split (first N go to col 1, next N to col
+' 2, etc.); we mirror that.
+function splitBeers(beers as dynamic, layout as object) as object
+    out = []
+    if beers = invalid then beers = []
+    cols = layout.beerSlots.Count()
+    if cols <= 1 then
+        out.push(beers)
+        return out
+    end if
+    per = Int((beers.Count() + cols - 1) / cols)
+    i = 0
+    for c = 0 to cols - 1
+        chunk = []
+        endIdx = i + per - 1
+        if endIdx > beers.Count() - 1 then endIdx = beers.Count() - 1
+        for k = i to endIdx
+            chunk.push(beers[k])
+        end for
+        out.push(chunk)
+        i = endIdx + 1
+        if i > beers.Count() - 1 then exit for
+    end for
+    ' Pad with empty arrays if beer count is less than column count.
+    while out.Count() < cols
+        out.push([])
+    end while
+    return out
+end function
+
+' ----- Renderers ----------------------------------------------------------
+
+sub renderImagePanel(layout as object)
+    slot = layout.imageSlot
+    poster = CreateObject("roSGNode", "Poster")
+    poster.uri = layout.imageUrls[0]
+    poster.translation = [slot.x, slot.y]
+    poster.width = slot.w
+    poster.height = slot.h
+    poster.loadDisplayMode = "scaleToFit"
+    m.bodyContainer.appendChild(poster)
+    ' Slideshow rotation across multiple imageUrls is a v4 follow-up.
+end sub
+
+sub renderBeerColumn(beers as dynamic, breweryLogoUrl as dynamic, slot as object)
+    if beers = invalid or beers.Count() = 0 then return
+
+    container = CreateObject("roSGNode", "Group")
+    container.translation = [slot.x, 0]
+    m.bodyContainer.appendChild(container)
+
+    y = slot.y - m.BODY_TOP  ' relative to bodyContainer
     for i = 0 to beers.Count() - 1
         beer = beers[i]
         isLast = (i = beers.Count() - 1)
-        result = buildBeerRow(beer, breweryLogoUrl, isLast)
+        result = buildBeerRow(beer, breweryLogoUrl, isLast, slot.w)
         result.node.translation = [0, y]
-        m.beerList.appendChild(result.node)
+        container.appendChild(result.node)
         y = y + result.height
-        ' Avoid running off the bottom of the screen. Beer area is
-        ' y=140..1030 = 890px tall.
-        if y > 880 then exit for
+        if y > slot.y + slot.h then exit for
     end for
 end sub
 
-' Build one beer row. Each row is a Group whose `height` field we set
-' so the caller can stack rows. Layout (no description):
+' Build one beer row. Layout (within the row Group):
 '
-'   [80px x 80px label]  [text block]  [prices grid]
-'      (optional)        flex-grows    right-aligned
+'   [80px label]  TAP# Beer Name                           Size $X.XX
+'                 Style · ABV% · IBU IBU                   Size $X.XX
+'                 (description if config.show_description)
+'   ────────────────────────────────────────────────────────────────
 '
-function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boolean) as object
+' Returns { node, height } because Group has no settable height field —
+' assigning to row.height is silently dropped and reads back Invalid.
+function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boolean, rowWidth as integer) as object
     row = CreateObject("roSGNode", "Group")
 
     showLabel = boolField(m.config, "show_label_image", true)
@@ -196,30 +318,48 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         labelSrc = breweryLogoUrl
     end if
 
-    ' Resolve text and column geometry ----------------------------------
-    rowWidth = 1840
+    nameStr = asString(beer.name)
+    styleStr = asString(beer.style)
+    print "[display] beer name="; nameStr; " | style="; styleStr; " | abv="; asString(beer.abv); " | ibu="; asString(beer.ibu)
+
+    ' --- Column geometry ----------------------------------------------
     textX = 0
     if showLabel and labelSrc <> "" then
         textX = m.LABEL_BOX + m.LABEL_RIGHT_GAP
     end if
-    pricesX = rowWidth - m.PRICES_BOX_WIDTH
-    textWidth = pricesX - textX - m.PRICES_LEFT_GAP
 
-    ' Detail line: "Style · X.X% ABV · YY IBU" — only parts that are
-    ' configured + present.
+    ' Decide whether to reserve a prices column at all. If this beer has
+    ' no sizes, we hand back the prices-column width to the text area.
+    sizes = beer.beer_sizes
+    visibleIds = beer._visible_size_ids
+    pricesEnabled = false
+    pricesList = invalid
+    if sizes <> invalid and sizes.Count() > 0 then
+        pricesList = filterSizes(sizes, visibleIds)
+        if pricesList.Count() > 0 then pricesEnabled = true
+    end if
+
+    pricesX = rowWidth
+    pricesW = 0
+    textRight = rowWidth
+    if pricesEnabled then
+        pricesW = m.PRICES_BOX_WIDTH
+        pricesX = rowWidth - pricesW
+        textRight = pricesX - m.PRICES_LEFT_GAP
+    end if
+    textWidth = textRight - textX
+
+    ' --- Vertical budget ----------------------------------------------
+    nameH = 44     ' fits font:LargestBoldSystemFont (~36px) comfortably
+    detailH = 32   ' fits MediumSystemFont (~24px)
+
     detailParts = []
     if showStyle and stringIsSet(beer.style) then detailParts.push(beer.style)
     if showAbv and numberIsSet(beer.abv) then detailParts.push(formatAbv(beer.abv) + " ABV")
     if showIbu and numberIsSet(beer.ibu) then detailParts.push(formatIbu(beer.ibu))
     detailLine = joinStrings(detailParts, " · ")
-
     descriptionLine = ""
     if showDescription and stringIsSet(beer.description) then descriptionLine = beer.description
-
-    ' --- Vertical budget ----------------------------------------------
-    ' Heights are approximate — line-height ~1.2 of font size, rounded.
-    nameH = Int(m.NAME_FONT_SIZE * 1.2)
-    detailH = Int(m.DETAIL_FONT_SIZE * 1.2)
 
     contentH = nameH
     if detailLine <> "" then contentH = contentH + m.ROW_GAP + detailH
@@ -237,42 +377,40 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         row.appendChild(poster)
     end if
 
-    ' --- Name + tap# line ---------------------------------------------
+    ' --- Name + tap# line (directly on row, no nested group) ----------
     nameColor = configHex(m.config, "beer_name_color", "0xFFFFFFFF", 255)
     priceColor = configHex(m.config, "price_color", "0xFBBF24FF", 255)
+    detailColor = configHex(m.config, "beer_detail_color", "0x9CA3AFFF", 255)
 
-    nameRowGroup = CreateObject("roSGNode", "Group")
-    nameRowGroup.translation = [textX, m.ROW_PADDING_Y]
-
-    nameX = 0
+    nameY = m.ROW_PADDING_Y
+    nameX = textX
     if showTap and beer.tap_number <> invalid then
         tapLbl = CreateObject("roSGNode", "Label")
         tapLbl.text = asString(beer.tap_number) + "."
         tapLbl.font = makeFont(m.NAME_FONT_SIZE, true)
         tapLbl.color = priceColor
+        tapLbl.width = 60
         tapLbl.height = nameH
+        tapLbl.horizAlign = "left"
         tapLbl.vertAlign = "center"
-        tapLbl.translation = [0, 0]
-        nameRowGroup.appendChild(tapLbl)
-        ' Reserve ~70px for "99." then a gap.
-        nameX = 70
+        tapLbl.translation = [nameX, nameY]
+        row.appendChild(tapLbl)
+        nameX = textX + 70
     end if
 
     nameLbl = CreateObject("roSGNode", "Label")
-    nameLbl.text = asString(beer.name)
+    nameLbl.text = nameStr
     nameLbl.font = makeFont(m.NAME_FONT_SIZE, true)
     nameLbl.color = nameColor
-    nameLbl.width = textWidth - nameX
+    nameLbl.width = textRight - nameX
     nameLbl.height = nameH
+    nameLbl.horizAlign = "left"
     nameLbl.vertAlign = "center"
-    nameLbl.translation = [nameX, 0]
-    nameRowGroup.appendChild(nameLbl)
-
-    row.appendChild(nameRowGroup)
+    nameLbl.translation = [nameX, nameY]
+    row.appendChild(nameLbl)
 
     ' --- Detail line --------------------------------------------------
-    nextY = m.ROW_PADDING_Y + nameH + m.ROW_GAP
-    detailColor = configHex(m.config, "beer_detail_color", "0x9CA3AFFF", 255)
+    nextY = nameY + nameH + m.ROW_GAP
     if detailLine <> "" then
         detailLbl = CreateObject("roSGNode", "Label")
         detailLbl.text = detailLine
@@ -280,6 +418,7 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         detailLbl.color = detailColor
         detailLbl.width = textWidth
         detailLbl.height = detailH
+        detailLbl.horizAlign = "left"
         detailLbl.vertAlign = "center"
         detailLbl.translation = [textX, nextY]
         row.appendChild(detailLbl)
@@ -293,30 +432,23 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         descLbl.color = detailColor
         descLbl.width = textWidth
         descLbl.height = detailH
+        descLbl.horizAlign = "left"
         descLbl.vertAlign = "center"
         descLbl.translation = [textX, nextY]
-        ' Single-line for v2; could enable wrap later if it doesn't blow
-        ' up the row-height calc.
         row.appendChild(descLbl)
     end if
 
-    ' --- Prices column (right-anchored) -------------------------------
-    sizes = beer.beer_sizes
-    visibleIds = beer._visible_size_ids
-    if sizes <> invalid and sizes.Count() > 0 then
-        renderable = filterSizes(sizes, visibleIds)
-        if renderable.Count() > 0 then
-            renderPriceColumn(row, renderable, pricesX, priceColor, detailColor)
-        end if
+    ' --- Prices column ------------------------------------------------
+    if pricesEnabled then
+        renderPriceColumn(row, pricesList, pricesX, pricesW, priceColor, detailColor)
     end if
 
-    ' --- Per-row divider line at the bottom ---------------------------
+    ' --- Per-row divider ----------------------------------------------
     if showDividers and not isLast then
         divider = CreateObject("roSGNode", "Rectangle")
         divider.width = rowWidth
         divider.height = intField(m.config, "row_divider_thickness", 1)
         opacityPct = intField(m.config, "row_divider_opacity", 100)
-        ' Alpha byte: opacity 0–100 → 0–255
         alphaByte = Int((opacityPct / 100) * 255)
         if alphaByte > 255 then alphaByte = 255
         if alphaByte < 0 then alphaByte = 0
@@ -325,14 +457,9 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         row.appendChild(divider)
     end if
 
-    ' Return both the node and its computed height. We can't stash the
-    ' height on the Group itself — SceneGraph silently drops writes to
-    ' unknown fields, so `row.height = rowHeight` would leave the height
-    ' Invalid when read back in renderBeerList.
     return { node: row, height: rowHeight }
 end function
 
-' Filter sizes by visible_ids if the operator has hidden some.
 function filterSizes(sizes as object, visibleIds as dynamic) as object
     if visibleIds = invalid or visibleIds.Count() = 0 then return sizes
     out = []
@@ -347,16 +474,13 @@ function filterSizes(sizes as object, visibleIds as dynamic) as object
     return out
 end function
 
-' Render the per-size price rows on the right side of a beer row. Lays
-' out one per line: "Size $X.XX" — the web does a multi-column grid for
-' 4+ sizes; we keep it single-column for v2.
-sub renderPriceColumn(row as object, sizes as object, pricesX as integer, priceColor as string, sizeColor as string)
+sub renderPriceColumn(row as object, sizes as object, pricesX as integer, pricesW as integer, priceColor as string, sizeColor as string)
     priceGroup = CreateObject("roSGNode", "Group")
     priceGroup.translation = [pricesX, m.ROW_PADDING_Y]
 
-    sizeColWidth = 120
-    amountColWidth = m.PRICES_BOX_WIDTH - sizeColWidth - 12
-    lineH = Int(m.PRICE_FONT_SIZE * 1.2)
+    sizeColW = 100
+    amountColW = pricesW - sizeColW - 12
+    lineH = 36
 
     for i = 0 to sizes.Count() - 1
         s = sizes[i]
@@ -366,7 +490,7 @@ sub renderPriceColumn(row as object, sizes as object, pricesX as integer, priceC
         sizeLbl.text = asString(s.label)
         sizeLbl.font = makeFont(m.SIZE_LABEL_FONT_SIZE, false)
         sizeLbl.color = sizeColor
-        sizeLbl.width = sizeColWidth
+        sizeLbl.width = sizeColW
         sizeLbl.horizAlign = "right"
         sizeLbl.translation = [0, y]
         priceGroup.appendChild(sizeLbl)
@@ -375,32 +499,66 @@ sub renderPriceColumn(row as object, sizes as object, pricesX as integer, priceC
         amountLbl.text = formatPrice(s.price)
         amountLbl.font = makeFont(m.PRICE_FONT_SIZE, true)
         amountLbl.color = priceColor
-        amountLbl.width = amountColWidth
+        amountLbl.width = amountColW
         amountLbl.horizAlign = "left"
-        amountLbl.translation = [sizeColWidth + 12, y]
+        amountLbl.translation = [sizeColW + 12, y]
         priceGroup.appendChild(amountLbl)
     end for
 
     row.appendChild(priceGroup)
 end sub
 
+' ----- Footer ticker ------------------------------------------------------
+
+sub renderFooter(footers as dynamic, config as object)
+    parts = []
+    if footers <> invalid then
+        for each f in footers
+            if f.text <> invalid and f.text <> "" then parts.push(f.text)
+        end for
+    end if
+
+    if parts.Count() = 0 then
+        ' Stop the animation and clear text so nothing scrolls past.
+        m.tickerAnim.control = "stop"
+        m.footerText.text = ""
+        return
+    end if
+
+    ' Join with a wide bullet separator and pad with extra spaces so the
+    ' loop point isn't visibly abrupt.
+    text = joinStrings(parts, "   •   ") + "        "
+    m.footerText.text = text
+    m.footerText.color = configHex(config, "footer_color", "0xFFFFFFFF", 255)
+    m.footerText.font = makeFont(m.FOOTER_FONT_SIZE, false)
+
+    ' Estimate width: avg ~14px per char at MediumSystemFont. Doesn't
+    ' need to be exact — the animation just needs to overshoot the left
+    ' edge so the text vanishes before looping.
+    estW = Len(text) * 14
+    if estW < 1200 then estW = 1200
+
+    ' Rebuild the interpolator's keyValue with the right end-point.
+    ' (Vector2DFieldInterpolator's keyValue is an array of [x, y] pairs.)
+    m.tickerInterp.keyValue = [ [1920.0, 15.0], [-estW * 1.0, 15.0] ]
+
+    ' Speed: ticker_speed is px/sec on the web; total distance is
+    ' (1920 + estW). Duration = distance / speed, clamped 8s..60s.
+    speed = intField(config, "ticker_speed", 150)
+    if speed < 30 then speed = 30
+    duration = (1920 + estW) / speed
+    if duration < 8 then duration = 8
+    if duration > 60 then duration = 60
+    m.tickerAnim.duration = duration
+
+    m.tickerAnim.control = "start"
+end sub
+
 ' ----- Color + font helpers ----------------------------------------------
 
-' Pick the system-font alias closest to the requested px size. Roku's
-' system-font aliases are strings (resolved by the renderer), come in
-' fixed sizes, and work everywhere — unlike the Font node (which needs
-' a real TTF uri) and SystemFont (which doesn't exist on all firmware,
-' confirmed missing on TCL Roku TVs).
-'
-' Approximate alias sizes (vary slightly by device):
-'   small   ~16,  small-bold   ~16
-'   medium  ~21,  medium-bold  ~21
-'   large   ~28,  large-bold   ~28
-'   largest ~36,  largest-bold ~36
-'   huge    ~48,  huge-bold    ~48
-'
-' Shipping a TTF (e.g. Roboto, or one of the brand fonts the web uses)
-' would let us hit any pixel size — deferred to v3.
+' Pick the closest Roku system-font alias to the requested px size.
+' Sizes are approximate. Shipping a TTF would let us hit any pixel size
+' — deferred.
 function makeFont(size as integer, bold as boolean) as string
     if size >= 48 then
         if bold then return "font:HugeBoldSystemFont"
@@ -422,9 +580,6 @@ function makeFont(size as integer, bold as boolean) as string
     return "font:SmallSystemFont"
 end function
 
-' Read a #RRGGBB-style hex color from config and turn it into Roku's
-' 0xRRGGBBAA format. Falls back to `fallback` (already in Roku format)
-' when the field is missing or invalid.
 function configHex(config as object, key as string, fallback as string, alpha as integer) as string
     if config = invalid then return fallback
     hex = config[key]
@@ -433,10 +588,16 @@ function configHex(config as object, key as string, fallback as string, alpha as
     if Left(cleaned, 1) = "#" then cleaned = Mid(cleaned, 2)
     if Len(cleaned) < 6 then return fallback
     rgbPart = UCase(Mid(cleaned, 1, 6))
-    aHex = StrI(alpha, 16)
-    aHex = aHex.Trim()
-    if Len(aHex) = 1 then aHex = "0" + aHex
-    return "0x" + rgbPart + UCase(aHex)
+    return "0x" + rgbPart + intToHex2(alpha)
+end function
+
+function intToHex2(n as integer) as string
+    chars = "0123456789ABCDEF"
+    if n < 0 then n = 0
+    if n > 255 then n = 255
+    hi = Int(n / 16)
+    lo = n - hi * 16
+    return Mid(chars, hi + 1, 1) + Mid(chars, lo + 1, 1)
 end function
 
 function boolField(config as object, key as string, fallback as boolean) as boolean
@@ -465,8 +626,7 @@ end function
 
 function stringIsSet(v as dynamic) as boolean
     if v = invalid then return false
-    s = asString(v)
-    return Len(s) > 0
+    return Len(asString(v)) > 0
 end function
 
 function numberIsSet(v as dynamic) as boolean
@@ -495,7 +655,6 @@ function formatIbu(ibu as dynamic) as string
     return Int(n).toStr() + " IBU"
 end function
 
-' Match the web's formatPrice — 2-decimal dollars with `$` prefix.
 function formatPrice(price as dynamic) as string
     if price = invalid then return ""
     n = price
@@ -517,11 +676,15 @@ function joinStrings(parts as object, separator as string) as string
     return out
 end function
 
-' ----- Status + remote handling ------------------------------------------
-
-sub setStatus(msg as string)
-    m.connectionLabel.text = msg
+' Remove every child of a Group. Used between renders so we don't pile
+' up stale beer rows / image panels.
+sub clearGroup(g as object)
+    while g.getChildCount() > 0
+        g.removeChild(g.getChild(0))
+    end while
 end sub
+
+' ----- Remote handling ----------------------------------------------------
 
 function onKeyEvent(key as string, press as boolean) as boolean
     if press and (LCase(key) = "back") then
