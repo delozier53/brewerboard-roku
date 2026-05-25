@@ -446,25 +446,25 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         end if
     end if
 
-    ' --- Logo size (computed first so textX can react to it) ----------
-    ' The logo grows with the stretched row height so tall rows don't
-    ' have a tiny logo floating in the upper-left. Cap at 100 so it
-    ' doesn't eat too much horizontal space — earlier 140 cap was
-    ' overlapping the text area on stretched rows.
+    ' --- Logo size — sized off TEXT content height, not row height ----
+    ' The web's logoSizeBase = sum of (name lineH + detail lineH +
+    ' description lineH), so the logo visually matches the height of
+    ' the text block next to it. Earlier builds tried to scale the
+    ' logo up with row stretching (rowHeight-based), which produced
+    ' the 180-px logos that overran every row in the build-19 photos.
+    ' We compute logoSize as a placeholder here using the current
+    ' LOGO_BOX; it gets recomputed against contentH after we know the
+    ' final layout (single- or multi-line name).
     logoSize = m.LOGO_BOX
-    if labelSrc <> "" then
-        targetLogo = targetRowHeight - 24
-        if targetLogo > m.LOGO_BOX then logoSize = targetLogo
-        if logoSize > 100 then logoSize = 100
-    end if
 
     ' --- Column geometry inside the row -------------------------------
-    ' textX is now driven by the ACTUAL logo size (was hardcoded to
-    ' m.LOGO_BOX = 60, which meant text started at x=74 but the logo
-    ' extended to x=127 on tall rows — visible overlap).
+    ' textX uses the MAX expected logoSize (100, our cap) so the text
+    ' column position is consistent across rows. We compute the actual
+    ' logoSize later (from contentH) but reserve the max upfront so
+    ' rows with shorter content don't shift the text column horizontally.
     leftX = 0
     if labelSrc <> "" then
-        textX = logoSize + m.LOGO_GAP
+        textX = 100 + m.LOGO_GAP
     else
         textX = 0
     end if
@@ -548,20 +548,16 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     topPad = m.ROW_PADDING_Y + extraPad
 
     ' --- Logo image (left) --------------------------------------------
-    ' Allow the logo to grow on tall rows so it fills the row gracefully
-    ' instead of floating up top. Capped at a sensible max so it doesn't
-    ' dominate the screen on a 1-col / 2-beer layout where the row is
-    ' enormous.
-    growLogo = rowHeight - 24
-    if labelSrc <> "" and growLogo > logoSize then
-        if growLogo > 180 then
-            logoSize = 180
-        else
-            logoSize = growLogo
-        end if
+    ' Final logoSize is the SMALLER of (text content height, 100). This
+    ' way the logo never exceeds the visible text block — matches the
+    ' web's logoSizeBase calculation. Centered vertically within the
+    ' row content (not the whole row) so it tracks the text properly.
+    if labelSrc <> "" then
+        logoSize = contentH
+        if logoSize > 100 then logoSize = 100
+        if logoSize < 40 then logoSize = 40
     end if
-    logoCenterY = Int((rowHeight - logoSize) / 2)
-    if logoCenterY < topPad then logoCenterY = topPad
+    logoCenterY = topPad + Int((contentH - logoSize) / 2)
     if labelSrc <> "" then
         poster = CreateObject("roSGNode", "Poster")
         poster.uri = labelSrc
