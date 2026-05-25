@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Editor scratch
+.vscode/
+*.swp
+
+# Build artifacts
+*.zip
+*.pkg
+
+# Local-only sideload helpers (sensitive: contains TV IP / password)
+.env
+.env.local

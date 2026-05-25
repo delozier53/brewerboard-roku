@@ -1,0 +1,34 @@
+## Channel metadata read by the Roku platform at sideload + cert time.
+## Keys are case-sensitive. Comments begin with `#`. Order does not matter.
+
+title=BrewerBoard
+subtitle=Brewery taplist display
+
+## Versioning — bump `build_version` for every sideload/upload so the Roku
+## cache picks up new code. `major.minor.build` is what the user sees in
+## "About" once the channel is published.
+major_version=1
+minor_version=0
+build_version=00001
+
+## Render at full 1080p. Roku scales down for HD/SD TVs automatically.
+## Without `fhd`, SceneGraph nodes default to 1280x720 coordinate space and
+## you'll get blurry text on modern 4K Roku TVs.
+ui_resolutions=fhd
+
+## Channel icon (focused, used on home screen). Roku requires both HD and FHD.
+## Required sizes: HD = 290x218, FHD = 540x405. (Roku resizes for display.)
+mm_icon_focus_hd=pkg:/images/icon_hd.png
+mm_icon_focus_fhd=pkg:/images/icon_fhd.png
+
+## Splash screen shown while the channel boots. HD = 1280x720, FHD = 1920x1080.
+splash_screen_hd=pkg:/images/splash_hd.png
+splash_screen_fhd=pkg:/images/splash_fhd.png
+
+## Background color shown before the splash image loads (RGB hex).
+splash_color=#0a0a0a
+splash_min_time=1500
+
+## Category in the Roku Channel Store. "TV Apps" is for live/utility apps;
+## brewery taplist fits here better than "Special Interest".
+category=Special Interest

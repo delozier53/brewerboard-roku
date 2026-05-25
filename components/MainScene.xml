@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Root SceneGraph scene. Acts as a router between the code-entry screen and
+  the display screen. On boot it checks Roku's Registry for a saved 6-digit
+  code (set by CodeEntryScene the last time the user paired this TV). If
+  one exists, it skips straight to the display — mirroring the localStorage
+  auto-reconnect behavior in the web /display page.
+-->
+<component name="MainScene" extends="Scene">
+
+    <interface>
+        <field id="contentId" type="string" />
+    </interface>
+
+    <script type="text/brightscript" uri="pkg:/components/MainScene.brs" />
+
+    <children>
+        <!-- Full-screen container the active sub-scene gets added to. The
+             dark background keeps the TV from flashing white between scene
+             swaps. -->
+        <Rectangle id="rootBg" width="1920" height="1080" color="0x0A0A0AFF" />
+        <Group id="sceneHost" translation="[0,0]" />
+    </children>
+</component>

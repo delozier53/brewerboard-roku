@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  DisplayLoaderTask — runs an HTTPS GET to /api/display/[code] on a worker
+  thread so the main render thread never blocks on network. SceneGraph
+  Task nodes are the Roku idiom for async work: set `url`, set
+  `control = "RUN"`, observe `response`.
+-->
+<component name="DisplayLoaderTask" extends="Task">
+
+    <interface>
+        <field id="url" type="string" />
+        <field id="response" type="assocarray" alwaysNotify="true" />
+    </interface>
+
+    <script type="text/brightscript" uri="pkg:/components/DisplayLoaderTask.brs" />
+
+</component>

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Code entry screen. Renders 6 digit slots and an on-screen numeric keypad
+  the user can navigate with the Roku remote's D-pad. Once 6 digits are
+  entered the "Connect" button activates; pressing OK on it sets
+  `submittedCode` so MainScene can advance.
+
+  Design philosophy: don't use the built-in Keyboard node — it shows a
+  full alphanumeric keyboard which is overkill and lets the user enter
+  invalid codes. A 0–9 keypad is also faster on D-pad.
+-->
+<component name="CodeEntryScene" extends="Group">
+
+    <interface>
+        <!-- Set by this scene when user confirms a 6-digit code. MainScene
+             observes this field to advance. -->
+        <field id="submittedCode" type="string" alwaysNotify="true" />
+    </interface>
+
+    <script type="text/brightscript" uri="pkg:/components/CodeEntryScene.brs" />
+
+    <children>
+        <!-- Title + tagline, top-center -->
+        <Label id="titleLabel"
+            text="BrewerBoard"
+            translation="[760,140]"
+            width="400"
+            horizAlign="center"
+            font="font:LargeBoldSystemFont"
+            color="0xFFFFFFFF" />
+        <Label id="taglineLabel"
+            text="Enter your 6-digit screen code"
+            translation="[660,220]"
+            width="600"
+            horizAlign="center"
+            color="0xFFFFFF80" />
+
+        <!-- 6 digit slot rectangles, drawn dynamically in BRS init() so we
+             can re-style focused/filled states from code. Position is
+             centered around x=960. -->
+        <Group id="digitRow" translation="[660,320]" />
+
+        <!-- On-screen 0–9 keypad (3x4 grid: 1-9 then [Del,0,Connect]). Built
+             in init() so we can attach observers per-button. -->
+        <Group id="keypadGroup" translation="[760,520]" />
+
+        <!-- Helper text at the bottom -->
+        <Label id="helpLabel"
+            text="Use the remote's D-pad to navigate, press OK to select"
+            translation="[560,980]"
+            width="800"
+            horizAlign="center"
+            color="0xFFFFFF40" />
+    </children>
+</component>
