@@ -302,6 +302,22 @@ function computeNaturalRowHeight(showDescription as boolean) as integer
     return 24 + contentH  ' 12 padding top + 12 padding bottom
 end function
 
+' Reactive font picker: shrinks the font alias step-by-step until the
+' approximate rendered width fits within `availableW`. Avoids the "..."
+' truncation we get when a long combined "Name | Source Brewery" string
+' overflows the column. Char-width constants are rough averages — we
+' can't measure rendered text without an roFont object.
+function pickFitFont(text as string, availableW as integer) as string
+    n = Len(text)
+    if n = 0 then return "font:LargeBoldSystemFont"
+    ' Approx px-per-char per alias (bold). Conservative: better to drop
+    ' a step too early than truncate.
+    if n * 17 <= availableW then return "font:LargeBoldSystemFont"
+    if n * 14 <= availableW then return "font:MediumBoldSystemFont"
+    if n * 11 <= availableW then return "font:SmallBoldSystemFont"
+    return "font:SmallBoldSystemFont"
+end function
+
 ' Render the header sub-section: 1 or 2 header texts side by side, then
 ' a horizontal divider below. Returns the total height consumed.
 function renderHeaderArea(container as object, headers as dynamic, width as integer, config as object) as integer
@@ -370,10 +386,25 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         end if
     end if
 
+    ' --- Logo size (computed first so textX can react to it) ----------
+    ' The logo grows with the stretched row height so tall rows don't
+    ' have a tiny logo floating in the upper-left. Cap at 100 so it
+    ' doesn't eat too much horizontal space — earlier 140 cap was
+    ' overlapping the text area on stretched rows.
+    logoSize = m.LOGO_BOX
+    if labelSrc <> "" then
+        targetLogo = targetRowHeight - 24
+        if targetLogo > m.LOGO_BOX then logoSize = targetLogo
+        if logoSize > 100 then logoSize = 100
+    end if
+
     ' --- Column geometry inside the row -------------------------------
+    ' textX is now driven by the ACTUAL logo size (was hardcoded to
+    ' m.LOGO_BOX = 60, which meant text started at x=74 but the logo
+    ' extended to x=127 on tall rows — visible overlap).
     leftX = 0
     if labelSrc <> "" then
-        textX = m.LOGO_BOX + m.LOGO_GAP
+        textX = logoSize + m.LOGO_GAP
     else
         textX = 0
     end if
@@ -425,14 +456,8 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     topPad = m.ROW_PADDING_Y + extraPad
 
     ' --- Logo image (left) --------------------------------------------
-    ' Scale the logo proportional to the stretched row height (capped),
-    ' so on tall rows the logo fills the row gracefully instead of
-    ' floating at the top.
-    logoSize = m.LOGO_BOX
-    targetLogo = rowHeight - 20
-    if targetLogo > m.LOGO_BOX and targetLogo < 160 then logoSize = targetLogo
-    if logoSize > 140 then logoSize = 140
-
+    ' logoSize was computed up at the top of the function so textX
+    ' could react to it. Center it vertically within the row.
     logoCenterY = Int((rowHeight - logoSize) / 2)
     if logoCenterY < topPad then logoCenterY = topPad
     if labelSrc <> "" then
@@ -446,10 +471,16 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     end if
 
     ' --- Name + source brewery line (one combined label) --------------
+    ' Reactive font: if the combined name+source string is wider than
+    ' the available textWidth at the configured large bold font, drop
+    ' down a step (medium bold) so we never truncate. This is the only
+    ' way to fit "Chumy the Whale | Skydance Brewing" in a half-screen
+    ' column without shipping a narrower TTF like Raleway.
     nameY = topPad
     nameDisplay = nameStr
     if sourceStr <> "" then nameDisplay = nameStr + "  |  " + sourceStr
-    nameLbl = createSimpleLabel(nameDisplay, textX, nameY, textWidth, nameLineH, style.nameFont, style.nameColor, "left")
+    chosenFont = pickFitFont(nameDisplay, textWidth)
+    nameLbl = createSimpleLabel(nameDisplay, textX, nameY, textWidth, nameLineH, chosenFont, style.nameColor, "left")
     row.appendChild(nameLbl)
 
     ' --- Detail line --------------------------------------------------
