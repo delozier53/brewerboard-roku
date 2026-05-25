@@ -104,16 +104,17 @@ sub renderPayload(payload as object)
     config = payload.screen.config
     m.config = config
 
-    ' Diagnostic prints so `nc <tv-ip> 8085` shows exactly what config
-    ' the channel just received. If the operator edited something in
-    ' the dashboard and we're still showing the old value, these
-    ' prints reveal whether the API is returning stale data or whether
-    ' the Roku is rendering fresh data incorrectly.
+    ' Filter to only the headers the operator has flipped ON in the
+    ' dashboard. Web uses is_active on header rows; we accept a couple
+    ' of variant names defensively so a schema rename doesn't break us
+    ' silently.
+    activeHeaders = filterActiveHeaders(payload.headers)
+
     headerStr = ""
-    if payload.headers <> invalid and payload.headers.Count() > 0 and payload.headers[0].text <> invalid then headerStr = payload.headers[0].text
+    if activeHeaders.Count() > 0 and activeHeaders[0].text <> invalid then headerStr = activeHeaders[0].text
     colImgCount = 0
     if config.column_image_ids <> invalid then colImgCount = config.column_image_ids.Count()
-    print "[display] render: cols="; config.columns; " bg="; config.background_color; " header[0]="; headerStr; " column_image_ids="; colImgCount
+    print "[display] render: cols="; config.columns; " bg="; config.background_color; " header[0]="; headerStr; " active_headers="; activeHeaders.Count(); " column_image_ids="; colImgCount
 
     m.rootBg.color = configHex(config, "background_color", "0x1C1917FF", 255)
 
@@ -126,15 +127,63 @@ sub renderPayload(payload as object)
         renderImagePanel(layout)
     end if
 
-    ' Distribute beers across the configured beer columns.
+    ' Header bar spans the FULL tap-list area (union of all beer-column
+    ' slot widths), not just the first column. Web puts the <header>
+    ' inside the tap-list panel which is a single flex container above
+    ' all the rendered beer cards.
+    headerH = 0
+    if activeHeaders.Count() > 0 then
+        headerArea = computeHeaderArea(layout)
+        renderHeaderArea(activeHeaders, headerArea, config)
+        headerH = headerArea.h
+    end if
+
+    ' Distribute beers across the configured beer columns. Slots are
+    ' offset down by header height so we don't render over the headers.
     beerColumns = splitBeers(payload.beers, layout)
     for ci = 0 to beerColumns.Count() - 1
         slot = layout.beerSlots[ci]
-        renderTapListColumn(beerColumns[ci], payload.brewery_logo_url, payload.headers, slot, config, ci)
+        offsetSlot = { x: slot.x, y: slot.y + headerH, w: slot.w, h: slot.h - headerH }
+        renderTapListColumn(beerColumns[ci], payload.brewery_logo_url, offsetSlot, config)
     end for
 
     renderFooter(payload.footers, config)
 end sub
+
+' Header is only rendered for headers the operator has set is_active=true.
+' Accept variant field names defensively in case the API ever renames.
+function filterActiveHeaders(headers as dynamic) as object
+    out = []
+    if headers = invalid then return out
+    for each h in headers
+        if isHeaderActive(h) then out.push(h)
+    end for
+    return out
+end function
+
+function isHeaderActive(h as object) as boolean
+    if h = invalid then return false
+    if h.is_active <> invalid and type(h.is_active) = "Boolean" then return h.is_active
+    if h.active <> invalid and type(h.active) = "Boolean" then return h.active
+    if h.is_visible <> invalid and type(h.is_visible) = "Boolean" then return h.is_visible
+    ' If no toggle field is present in the schema at all, default to
+    ' showing the header. (Prevents headers from disappearing if the
+    ' schema simply doesn't track an active flag.)
+    return true
+end function
+
+' Bounding box of the tap-list-area = union of every beer-column slot.
+' When the image panel is on one side, the tap-list area is the OTHER
+' side; with no image, it spans the full body width.
+function computeHeaderArea(layout as object) as object
+    leftX = layout.beerSlots[0].x
+    rightX = leftX + layout.beerSlots[0].w
+    for each s in layout.beerSlots
+        if s.x < leftX then leftX = s.x
+        if s.x + s.w > rightX then rightX = s.x + s.w
+    end for
+    return { x: leftX, y: m.BODY_TOP, w: rightX - leftX, h: m.HEADER_HEIGHT }
+end function
 
 ' ----- Layout computation -------------------------------------------------
 
@@ -251,21 +300,15 @@ end sub
 
 ' ----- Tap list column ----------------------------------------------------
 
-' Renders the header area at the top of the column (1 or 2 sub-columns),
-' a divider line, and then beer rows below. `colIndex` is 0 for the first
-' beer column (leftmost) and lets us decide whether to render headers
-' (only the first beer column shows them, matching the web).
-sub renderTapListColumn(beers as dynamic, breweryLogoUrl as dynamic, headers as dynamic, slot as object, config as object, colIndex as integer)
+' Renders one beer column's worth of rows. Header rendering is now done
+' at the renderPayload level (above all beer columns), not here — this
+' function only stacks beer rows starting from slot.y.
+sub renderTapListColumn(beers as dynamic, breweryLogoUrl as dynamic, slot as object, config as object)
     container = CreateObject("roSGNode", "Group")
     container.translation = [slot.x, slot.y]
     m.bodyContainer.appendChild(container)
 
     y = 0
-    if colIndex = 0 then
-        headerH = renderHeaderArea(container, headers, slot.w, config)
-        y = y + headerH
-    end if
-
     if beers = invalid or beers.Count() = 0 then return
 
     nameFont = "font:LargeBoldSystemFont"
@@ -343,41 +386,39 @@ function pickFitFont(text as string, availableW as integer) as string
     return "font:SmallBoldSystemFont"
 end function
 
-' Render the header sub-section: 1 or 2 header texts side by side, then
-' a horizontal divider below. Returns the total height consumed.
-function renderHeaderArea(container as object, headers as dynamic, width as integer, config as object) as integer
-    if headers = invalid or headers.Count() = 0 then return 0
+' Render the header area at the top of the tap-list area. Spans the
+' full tap-list width (not just the first column) so headers look like
+' a unified banner across the top, matching the web display.
+sub renderHeaderArea(headers as dynamic, area as object, config as object)
+    if headers = invalid or headers.Count() = 0 then return
 
-    ' Medium bold so "Sample Header Text 1" fits the half-column width
-    ' (~440 px) without truncating. Large bold was rendering at ~26 px/char,
-    ' too wide for the slot.
-    headerFont = "font:MediumBoldSystemFont"
+    container = CreateObject("roSGNode", "Group")
+    container.translation = [area.x, area.y]
+    m.bodyContainer.appendChild(container)
+
+    headerFont = "font:LargeBoldSystemFont"
     headerColor = configHex(config, "header_color", "0xFFFFFFFF", 255)
 
     rowH = 50
     if headers.Count() >= 2 then
-        ' Two columns of header text
-        halfW = (width - 24) / 2  ' 24px gap between header cells
+        halfW = (area.w - 24) / 2
         h1 = createSimpleLabel(asString(headers[0].text), 0, 10, halfW, rowH, headerFont, headerColor, "center")
         h2 = createSimpleLabel(asString(headers[1].text), halfW + 24, 10, halfW, rowH, headerFont, headerColor, "center")
         container.appendChild(h1)
         container.appendChild(h2)
     else
-        ' Single centered header
-        h = createSimpleLabel(asString(headers[0].text), 0, 10, width, rowH, headerFont, headerColor, "center")
+        h = createSimpleLabel(asString(headers[0].text), 0, 10, area.w, rowH, headerFont, headerColor, "center")
         container.appendChild(h)
     end if
 
-    ' Divider line under the headers — matches web's border-b
+    ' Divider line under the headers — matches the web's border-b.
     divider = CreateObject("roSGNode", "Rectangle")
-    divider.width = width
+    divider.width = area.w
     divider.height = 1
     divider.color = configHex(config, "font_color", "0xFFFFFF40", 64)
     divider.translation = [0, rowH + 14]
     container.appendChild(divider)
-
-    return rowH + 24  ' content height + spacing below divider
-end function
+end sub
 
 ' ----- Beer row -----------------------------------------------------------
 '
