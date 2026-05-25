@@ -63,14 +63,12 @@ sub buildDigitSlots()
         slot.translation = [i * (m.DIGIT_SLOT_WIDTH + m.DIGIT_SLOT_GAP), 0]
 
         bg = CreateObject("roSGNode", "Rectangle")
-        bg.id = "slotBg"
         bg.width = m.DIGIT_SLOT_WIDTH
         bg.height = m.DIGIT_SLOT_HEIGHT
         bg.color = m.SURFACE_DIM
         slot.appendChild(bg)
 
         lbl = CreateObject("roSGNode", "Label")
-        lbl.id = "slotLbl"
         lbl.text = ""
         lbl.width = m.DIGIT_SLOT_WIDTH
         lbl.height = m.DIGIT_SLOT_HEIGHT
@@ -81,7 +79,12 @@ sub buildDigitSlots()
         slot.appendChild(lbl)
 
         row.appendChild(slot)
-        m.digitSlots.push(slot)
+        ' Store direct references rather than relying on findNode("slotLbl").
+        ' SceneGraph's findNode does NOT scope to the calling node's subtree
+        ' reliably across firmware — it can return the first match anywhere
+        ' in the scene, which (with duplicate IDs across 6 sibling slots)
+        ' silently breaks refresh. Direct refs avoid the question.
+        m.digitSlots.push({ slot: slot, bg: bg, lbl: lbl })
     end for
 end sub
 
@@ -141,15 +144,13 @@ end sub
 
 sub refreshDigitSlots()
     for i = 0 to 5
-        slot = m.digitSlots[i]
-        lbl = slot.findNode("slotLbl")
-        bg = slot.findNode("slotBg")
+        s = m.digitSlots[i]
         if i < Len(m.code) then
-            lbl.text = Mid(m.code, i + 1, 1)
-            bg.color = m.BRAND_YELLOW_SOFT
+            s.lbl.text = Mid(m.code, i + 1, 1)
+            s.bg.color = m.BRAND_YELLOW_SOFT
         else
-            lbl.text = ""
-            bg.color = m.SURFACE_DIM
+            s.lbl.text = ""
+            s.bg.color = m.SURFACE_DIM
         end if
     end for
 end sub

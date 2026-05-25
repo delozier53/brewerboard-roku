@@ -21,11 +21,15 @@
     <script type="text/brightscript" uri="pkg:/components/CodeEntryScene.brs" />
 
     <children>
+        <!-- Transparent-background logo. We ship a separate asset
+             (images/logo.png) rather than reusing icon_fhd.png because
+             the icon is padded to 4:3 with a slate fill for Roku's home
+             screen — wrong shape and wrong background for this scene. -->
         <Poster id="logoPoster"
-            uri="pkg:/images/icon_fhd.png"
+            uri="pkg:/images/logo.png"
             translation="[890,60]"
             width="140"
-            height="105"
+            height="140"
             loadDisplayMode="scaleToFit" />
 
         <Label id="titleLabel"
