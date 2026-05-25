@@ -386,16 +386,20 @@ end sub
 
 ' ----- Color + font helpers ----------------------------------------------
 
-' Build a custom-sized Font node. SceneGraph's named system fonts (e.g.
-' "font:MediumBoldSystemFont") don't take a size argument, so for any
-' size we want we have to instantiate a Font node ourselves.
+' Build a custom-sized font node. Use SystemFont (not Font) so we don't
+' need to ship a TTF — SystemFont uses Roku's built-in OS font and
+' accepts a custom `size` and `style` ("regular" / "bold" / etc.).
+'
+' Earlier this function created a `Font` node with uri = "common:/Fonts/
+' Roboto-Bold.ttf", which silently fails on TVs that don't have that
+' exact font file — Labels then render to empty space with no error.
 function makeFont(size as integer, bold as boolean) as object
-    font = CreateObject("roSGNode", "Font")
+    font = CreateObject("roSGNode", "SystemFont")
     font.size = size
     if bold then
-        font.uri = "common:/Fonts/Roboto-Bold.ttf"
+        font.style = "bold"
     else
-        font.uri = "common:/Fonts/Roboto-Regular.ttf"
+        font.style = "regular"
     end if
     return font
 end function
