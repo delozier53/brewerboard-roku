@@ -866,11 +866,63 @@ function getFontNode(family as string, size as integer, bold as boolean) as obje
     cached = m.fontCache[key]
     if cached <> invalid then return cached
 
+    ' Roku's Font.uri silently fails when pointed at an HTTPS URL on
+    ' (at least some) TCL Roku firmware — Labels using such a Font
+    ' render zero glyphs with no runtime error. The workaround: download
+    ' the TTF to tmp:/ once via roUrlTransfer, then use Font.uri with
+    ' the local file:// path. First launch blocks ~1-2 s for the
+    ' initial download; subsequent renders are instant from cache.
+    localPath = ensureFontDownloaded(family, bold)
+
     font = CreateObject("roSGNode", "Font")
     font.size = size
-    font.uri = fontUrlFor(family, bold)
+    if localPath <> "" then
+        font.uri = localPath
+    end if
+    ' If localPath is empty (download failed), leaving uri unset makes
+    ' Roku fall back to its default system Roboto font — better than a
+    ' blank Label.
+
     m.fontCache[key] = font
     return font
+end function
+
+' Download a font once, cache to tmp:/ so subsequent getFontNode calls
+' are instant. Returns the local path on success, "" on failure (caller
+' falls back to system default). Synchronous on purpose: the first
+' render is the only blocking call, and a 1-2 s startup pause is
+' acceptable for an "always-on" TV display.
+function ensureFontDownloaded(family as string, bold as boolean) as string
+    if m.fontFiles = invalid then m.fontFiles = {}
+
+    weight = "r"
+    if bold then weight = "b"
+    cacheKey = family + "|" + weight
+    cachedPath = m.fontFiles[cacheKey]
+    if cachedPath <> invalid then return cachedPath
+
+    safeName = LCase(family)
+    safeName = replaceAll(safeName, " ", "-")
+    weightSuffix = "regular"
+    if bold then weightSuffix = "bold"
+    localPath = "tmp:/" + safeName + "-" + weightSuffix + ".ttf"
+
+    url = fontUrlFor(family, bold)
+    print "[font] downloading "; url; " -> "; localPath
+
+    transfer = CreateObject("roUrlTransfer")
+    transfer.SetUrl(url)
+    transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+    transfer.InitClientCertificates()
+    code = transfer.GetToFile(localPath)
+    print "[font] result HTTP="; code
+
+    if code = 200 then
+        m.fontFiles[cacheKey] = localPath
+        return localPath
+    end if
+    m.fontFiles[cacheKey] = ""
+    return ""
 end function
 
 ' Map an operator-selectable font family name to a TTF URL on jsdelivr's
