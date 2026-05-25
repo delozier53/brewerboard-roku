@@ -27,14 +27,14 @@
              screen — wrong shape and wrong background for this scene. -->
         <Poster id="logoPoster"
             uri="pkg:/images/logo.png"
-            translation="[890,60]"
-            width="140"
-            height="140"
+            translation="[910,50]"
+            width="100"
+            height="100"
             loadDisplayMode="scaleToFit" />
 
         <Label id="titleLabel"
             text="BrewerBoard"
-            translation="[560,185]"
+            translation="[560,170]"
             width="800"
             horizAlign="center"
             font="font:LargeBoldSystemFont"
@@ -42,7 +42,7 @@
 
         <Label id="taglineLabel"
             text="Enter your 6-digit screen code"
-            translation="[560,265]"
+            translation="[560,250]"
             width="800"
             horizAlign="center"
             font="font:MediumSystemFont"

@@ -1,65 +1,72 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-  DisplayScene — full-screen taplist rendering. Owns the polling Timer and
-  the HTTP Task that talks to /api/display/[code]. When the payload arrives,
-  rebuilds the beer-list UI inside `beerList`.
+  DisplayScene — taplist render. Layout follows the web BeerCard:
+    [label]  TAP# Beer Name                          Size  $X.XX
+             Style · ABV% · IBU IBU                  Size  $X.XX
+    ────────────────────────────────────────────────────────────
 
-  v1 visual scope: brewery logo top-left, screen name top-center, beer rows
-  below with tap number / name / style / ABV / IBU. Slideshows, custom
-  fonts, dividers, and footers are stubs — visible in the payload but not
-  rendered yet. Web-display parity comes in follow-up commits.
+  All colors come from the screen config (config.background_color,
+  font_color, price_color, beer_name_color, beer_detail_color,
+  header_color, footer_color). All visibility toggles (show_tap_numbers,
+  show_style, show_abv, show_ibu, show_label_image, show_description,
+  show_row_dividers) are respected.
+
+  v2 gaps (still): custom Google fonts (Roku can't load remote fonts —
+  needs shipped TTF), background image with overlay, footer ticker
+  animation (static text for now), tags (New/Featured/Coming Soon),
+  2+ column layouts, auto-fit scaling.
 -->
 <component name="DisplayScene" extends="Group">
 
     <interface>
-        <!-- Set by MainScene before mounting. -->
         <field id="screenCode" type="string" />
-        <!-- Set by this scene when the user wants to re-pair. -->
         <field id="requestSignOut" type="boolean" alwaysNotify="true" />
     </interface>
 
     <script type="text/brightscript" uri="pkg:/components/DisplayScene.brs" />
 
     <children>
-        <!-- Header bar: logo left, brewery + screen name center, status right -->
-        <Rectangle id="headerBg" width="1920" height="120" color="0x111111FF" />
+        <!-- Full-screen bg whose color we override from `screen.config.background_color`
+             once a payload arrives. Sits behind everything else. -->
+        <Rectangle id="rootBg" width="1920" height="1080" color="0x1C1917FF" />
+
+        <!-- Header bar: brewery logo (left), header text (center), status (right). -->
+        <Rectangle id="headerBg" width="1920" height="110" color="0x00000040" />
         <Poster id="breweryLogo"
             translation="[40,20]"
-            width="80"
-            height="80"
+            width="70"
+            height="70"
             loadDisplayMode="scaleToFit" />
-        <Label id="screenTitle"
-            text="BrewerBoard"
-            translation="[760,40]"
-            width="400"
+        <Label id="headerText"
+            text=""
+            translation="[460,30]"
+            width="1000"
             horizAlign="center"
             font="font:LargeBoldSystemFont"
             color="0xFFFFFFFF" />
         <Label id="connectionLabel"
             text=""
-            translation="[1700,55]"
-            width="200"
+            translation="[1700,45]"
+            width="180"
             horizAlign="right"
-            color="0xFFFFFF70" />
+            color="0xFFFFFF55" />
 
-        <!-- The beer rows live in this group, populated by renderBeerList(). -->
-        <Group id="beerList" translation="[40,160]" />
+        <!-- Beer rows populated by renderBeerList(). 40px side margins. -->
+        <Group id="beerList" translation="[40,140]" />
 
-        <!-- Footer ticker (single line for now). -->
-        <Label id="footerLabel"
+        <!-- Static footer text (web has a scrolling ticker; that's a v3 feature). -->
+        <Rectangle id="footerBg" translation="[0,1030]" width="1920" height="50" color="0x00000040" />
+        <Label id="footerText"
             text=""
-            translation="[40,1020]"
+            translation="[40,1040]"
             width="1840"
-            color="0xFFFFFF70" />
+            horizAlign="center"
+            color="0xFFFFFFAA" />
 
         <!-- Polling timer — fires every 30s to refetch the payload. -->
         <Timer id="refreshTimer"
             repeat="true"
             duration="30"
             control="start" />
-
-        <!-- Task component runs the HTTPS fetch on a worker thread so the
-             render thread stays responsive. Created lazily in init() so we
-             can pass the screenCode through. -->
     </children>
 </component>
