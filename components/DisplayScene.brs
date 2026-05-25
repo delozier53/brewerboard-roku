@@ -29,8 +29,13 @@ sub init()
     m.footerBg = m.top.findNode("footerBg")
     m.footerText = m.top.findNode("footerText")
     m.refreshTimer = m.top.findNode("refreshTimer")
+    m.slideshowTimer = m.top.findNode("slideshowTimer")
     m.tickerAnim = m.top.findNode("tickerAnim")
     m.tickerInterp = m.top.findNode("tickerInterp")
+
+    m.slideshowImages = []
+    m.slideshowIndex = 0
+    m.slideshowPoster = invalid
 
     ' Layout constants (1920x1080 FHD).
     m.SCREEN_W = 1920
@@ -55,6 +60,7 @@ sub init()
 
     m.top.observeField("screenCode", "onScreenCodeSet")
     m.refreshTimer.observeField("fire", "onRefreshTimerFired")
+    m.slideshowTimer.observeField("fire", "onSlideshowTick")
 end sub
 
 sub onScreenCodeSet()
@@ -342,10 +348,14 @@ sub renderTapListColumn(beers as dynamic, breweryLogoUrl as dynamic, slot as obj
         beer = beers[i]
         isLast = (i = beers.Count() - 1)
         result = buildBeerRow(beer, breweryLogoUrl, isLast, slot.w, rowH, rowStyle)
+        ' Skip rendering a beer that would extend past the column area
+        ' (would otherwise overrun into the footer ticker). The web's
+        ' auto-fit shrinks fonts to make everything fit; on Roku we
+        ' clip — preferable to text running through the footer.
+        if y + result.height > slot.h then exit for
         result.node.translation = [0, y]
         container.appendChild(result.node)
         y = y + result.height
-        if y > slot.h then exit for
     end for
 end sub
 
@@ -535,10 +545,26 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     descLine = ""
     if style.showDescription and stringIsSet(beer.description) then descLine = beer.description
 
-    contentH = nameLineH
-    if splitNameSource then contentH = contentH + sourceLineH
-    if detailLine <> "" then contentH = contentH + detailLineH
-    if descLine <> "" then contentH = contentH + detailLineH
+    textContentH = nameLineH
+    if splitNameSource then textContentH = textContentH + sourceLineH
+    if detailLine <> "" then textContentH = textContentH + detailLineH
+    if descLine <> "" then textContentH = textContentH + detailLineH
+
+    ' Price block goes 2-up side-by-side (matches the web's grid). The
+    ' vertical space it needs depends on how many sizes, rounded up to
+    ' the next pair. Row must be tall enough to fit whichever side is
+    ' taller — text block or price block.
+    priceCellH = 38
+    priceRowsNeeded = 0
+    if pricesEnabled then
+        n = pricesList.Count()
+        priceRowsNeeded = Int((n + 1) / 2)
+    end if
+    priceContentH = priceRowsNeeded * priceCellH
+
+    contentH = textContentH
+    if priceContentH > contentH then contentH = priceContentH
+
     naturalH = m.ROW_PADDING_Y + contentH + m.ROW_PADDING_Y
     rowHeight = naturalH
     if targetRowHeight > naturalH then rowHeight = targetRowHeight
@@ -599,9 +625,9 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         row.appendChild(descLbl)
     end if
 
-    ' --- Size + price stack (right) -----------------------------------
+    ' --- Size + price grid (right) — 2-up side-by-side -----------------
     if pricesEnabled then
-        renderPriceStack(row, pricesList, pricesX, m.PRICES_COL_W, topPad, style)
+        renderPriceGrid(row, pricesList, pricesX, m.PRICES_COL_W, topPad, priceCellH, style)
     end if
 
     ' --- Per-row divider ----------------------------------------------
@@ -624,21 +650,40 @@ end function
 ' Size + price stacked vertically in the right column. Matches the web
 ' photo: "12oz" above "$5", with the size in white and the price in the
 ' brand yellow.
-sub renderPriceStack(row as object, sizes as object, pricesX as integer, pricesW as integer, topPad as integer, style as object)
-    y = topPad
-    stackH = 32
+' Side-by-side 2-up price grid matching the web BeerCard layout:
+'
+'   12oz $5    16oz $6        ← row 1: sizes[0] | sizes[1]
+'   Pint $7    Can  $5        ← row 2: sizes[2] | sizes[3]
+'                              etc.
+'
+' Each cell is a (size-label, price) pair rendered side-by-side. With
+' 1 size, only the left cell is filled; the right cell is empty. With
+' an odd number of sizes, the last row has just the left cell.
+sub renderPriceGrid(row as object, sizes as object, pricesX as integer, pricesW as integer, topPad as integer, cellH as integer, style as object)
+    cellW = Int((pricesW - 8) / 2)  ' 2 cells per row, 8 px gap
     for i = 0 to sizes.Count() - 1
-        s = sizes[i]
-        sizeLbl = createSimpleLabel(asString(s.label), 0, y, pricesW, stackH, style.sizeFont, style.nameColor, "right")
-        sizeLbl.translation = [pricesX, y]
-        row.appendChild(sizeLbl)
-
-        priceLbl = createSimpleLabel(formatPrice(s.price), 0, y + stackH - 2, pricesW, stackH, style.priceFont, style.priceColor, "right")
-        priceLbl.translation = [pricesX, y + stackH - 2]
-        row.appendChild(priceLbl)
-
-        y = y + 2 * stackH + 6
+        col = i mod 2
+        gridRow = Int(i / 2)
+        cellX = pricesX
+        if col = 1 then cellX = pricesX + cellW + 8
+        cellY = topPad + gridRow * cellH
+        renderPriceCell(row, sizes[i], cellX, cellY, cellW, cellH, style)
     end for
+end sub
+
+sub renderPriceCell(row as object, size as object, x as integer, y as integer, w as integer, h as integer, style as object)
+    ' Split each cell into size-label (right-aligned ~55%) + price
+    ' (left-aligned remainder). Labels right-align so "Pint" and "12oz"
+    ' don't visually drift apart in a column.
+    labelW = Int(w * 0.55)
+    gap = 6
+    priceW = w - labelW - gap
+
+    sizeLbl = createSimpleLabel(asString(size.label), x, y, labelW, h, style.sizeFont, style.nameColor, "right")
+    row.appendChild(sizeLbl)
+
+    priceLbl = createSimpleLabel(formatPrice(size.price), x + labelW + gap, y, priceW, h, style.priceFont, style.priceColor, "left")
+    row.appendChild(priceLbl)
 end sub
 
 ' ----- Footer ticker ------------------------------------------------------

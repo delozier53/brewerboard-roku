@@ -56,6 +56,15 @@
             duration="30"
             control="start" />
 
+        <!-- Column image slideshow timer — fires every N seconds to
+             advance to the next image when the operator has set
+             multiple column_image_ids. Stopped when there's only one
+             image. -->
+        <Timer id="slideshowTimer"
+            repeat="true"
+            duration="8"
+            control="stop" />
+
         <Animation id="tickerAnim" duration="20" repeat="true" easeFunction="linear">
             <Vector2DFieldInterpolator
                 id="tickerInterp"
