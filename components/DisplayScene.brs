@@ -329,20 +329,14 @@ sub renderTapListColumn(beers as dynamic, breweryLogoUrl as dynamic, slot as obj
 
     rowStyle = { nameFont: nameFont, detailFont: detailFont, priceFont: priceFont, sizeFont: sizeFont, nameColor: nameColor, detailColor: detailColor, priceColor: priceColor, showLabel: showLabel, showStyle: showStyle, showAbv: showAbv, showIbu: showIbu, showDescription: showDescription, showDividers: showDividers }
 
-    ' Auto-fit: distribute extra vertical space evenly across rows so
-    ' the list naturally fills the column height instead of clumping at
-    ' the top with empty space below. (Roku system fonts come in fixed
-    ' sizes — we can't scale them like the web's --fit-scale, so we
-    ' scale the row padding/logo instead.)
-    naturalRowH = computeNaturalRowHeight(showDescription)
+    ' Distribute the column's vertical space evenly across the beer
+    ' rows. No upper cap — when there are few beers, the rows expand
+    ' to fill the screen (operator on a small list still gets a full
+    ' display). No lower bound either — when there are many beers,
+    ' rows compress; buildBeerRow then picks tighter fonts internally.
     availableH = slot.h - y
-    rowH = naturalRowH
-    if availableH > naturalRowH * beers.Count() then
-        rowH = Int(availableH / beers.Count())
-    end if
-    ' Cap the row height growth so logos don't become absurd on short
-    ' beer lists.
-    if rowH > naturalRowH * 2 then rowH = naturalRowH * 2
+    rowH = availableH
+    if beers.Count() > 0 then rowH = Int(availableH / beers.Count())
 
     for i = 0 to beers.Count() - 1
         beer = beers[i]
@@ -495,22 +489,54 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     textWidth = textRight - textX
 
     ' --- Vertical layout (top-anchored, no vertAlign center) ----------
-    ' Heights are based on observed Roku system-font cap heights:
-    '   LargeBoldSystemFont ≈ 28 px text + descender
-    '   MediumSystemFont    ≈ 22 px
-    nameLineH = 36
+    ' Reactive name/source layout: try fitting "Name  |  Source" on
+    ' one line at progressively smaller fonts; if it still overflows
+    ' even at SmallBoldSystemFont, fall back to two lines (name on its
+    ' own row, source brewery on the next). This handles narrow 3-col
+    ' layouts that can't fit "Cosmic | Skydance Brewing" on one line
+    ' regardless of font.
+    nameLineH = 44
+    sourceLineH = 32
     detailLineH = 28
 
+    combinedNameSrc = nameStr
+    if sourceStr <> "" then combinedNameSrc = nameStr + "  |  " + sourceStr
+
+    nameFontChosen = "font:LargeBoldSystemFont"
+    splitNameSource = false
+    if sourceStr <> "" then
+        ' Width estimates per char per font, conservative.
+        if Len(combinedNameSrc) * 22 > textWidth then
+            if Len(combinedNameSrc) * 17 > textWidth then
+                if Len(combinedNameSrc) * 14 > textWidth then
+                    ' Doesn't fit even at SmallBold → use two lines.
+                    splitNameSource = true
+                else
+                    nameFontChosen = "font:SmallBoldSystemFont"
+                end if
+            else
+                nameFontChosen = "font:MediumBoldSystemFont"
+            end if
+        end if
+    end if
+
+    ' Detail line ("Style · ABV · IBU") — also reactive: prefer Medium
+    ' but drop to Small if needed.
     detailParts = []
     if style.showStyle and stringIsSet(beer.style) then detailParts.push(beer.style)
     if style.showAbv and numberIsSet(beer.abv) then detailParts.push(formatAbv(beer.abv) + " ABV")
     if style.showIbu and numberIsSet(beer.ibu) then detailParts.push(formatIbu(beer.ibu))
     detailLine = joinStrings(detailParts, " · ")
+    detailFontChosen = style.detailFont
+    if detailLine <> "" and Len(detailLine) * 16 > textWidth then
+        detailFontChosen = "font:SmallSystemFont"
+    end if
 
     descLine = ""
     if style.showDescription and stringIsSet(beer.description) then descLine = beer.description
 
     contentH = nameLineH
+    if splitNameSource then contentH = contentH + sourceLineH
     if detailLine <> "" then contentH = contentH + detailLineH
     if descLine <> "" then contentH = contentH + detailLineH
     naturalH = m.ROW_PADDING_Y + contentH + m.ROW_PADDING_Y
@@ -522,8 +548,18 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     topPad = m.ROW_PADDING_Y + extraPad
 
     ' --- Logo image (left) --------------------------------------------
-    ' logoSize was computed up at the top of the function so textX
-    ' could react to it. Center it vertically within the row.
+    ' Allow the logo to grow on tall rows so it fills the row gracefully
+    ' instead of floating up top. Capped at a sensible max so it doesn't
+    ' dominate the screen on a 1-col / 2-beer layout where the row is
+    ' enormous.
+    growLogo = rowHeight - 24
+    if labelSrc <> "" and growLogo > logoSize then
+        if growLogo > 180 then
+            logoSize = 180
+        else
+            logoSize = growLogo
+        end if
+    end if
     logoCenterY = Int((rowHeight - logoSize) / 2)
     if logoCenterY < topPad then logoCenterY = topPad
     if labelSrc <> "" then
@@ -536,30 +572,34 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
         row.appendChild(poster)
     end if
 
-    ' --- Name + source brewery line (one combined label) --------------
-    ' Reactive font: if the combined name+source string is wider than
-    ' the available textWidth at the configured large bold font, drop
-    ' down a step (medium bold) so we never truncate. This is the only
-    ' way to fit "Chumy the Whale | Skydance Brewing" in a half-screen
-    ' column without shipping a narrower TTF like Raleway.
+    ' --- Name (line 1) + optional source brewery (line 2) -------------
+    ' If splitNameSource is true the combined string didn't fit even at
+    ' the smallest size, so we render name on its own line and source
+    ' on a dedicated second line below. Otherwise it's one combined
+    ' label with the chosen font.
     nameY = topPad
-    nameDisplay = nameStr
-    if sourceStr <> "" then nameDisplay = nameStr + "  |  " + sourceStr
-    chosenFont = pickFitFont(nameDisplay, textWidth)
-    nameLbl = createSimpleLabel(nameDisplay, textX, nameY, textWidth, nameLineH, chosenFont, style.nameColor, "left")
-    row.appendChild(nameLbl)
+    if splitNameSource then
+        nameLbl = createSimpleLabel(nameStr, textX, nameY, textWidth, nameLineH, "font:LargeBoldSystemFont", style.nameColor, "left")
+        row.appendChild(nameLbl)
+        srcLbl = createSimpleLabel(sourceStr, textX, nameY + nameLineH, textWidth, sourceLineH, "font:MediumBoldSystemFont", style.nameColor, "left")
+        row.appendChild(srcLbl)
+    else
+        nameLbl = createSimpleLabel(combinedNameSrc, textX, nameY, textWidth, nameLineH, nameFontChosen, style.nameColor, "left")
+        row.appendChild(nameLbl)
+    end if
 
     ' --- Detail line --------------------------------------------------
     detailY = nameY + nameLineH
+    if splitNameSource then detailY = detailY + sourceLineH
     if detailLine <> "" then
-        detailLbl = createSimpleLabel(detailLine, textX, detailY, textWidth, detailLineH, style.detailFont, style.detailColor, "left")
+        detailLbl = createSimpleLabel(detailLine, textX, detailY, textWidth, detailLineH, detailFontChosen, style.detailColor, "left")
         row.appendChild(detailLbl)
     end if
 
     if descLine <> "" then
         descY = detailY
         if detailLine <> "" then descY = descY + detailLineH
-        descLbl = createSimpleLabel(descLine, textX, descY, textWidth, detailLineH, style.detailFont, style.detailColor, "left")
+        descLbl = createSimpleLabel(descLine, textX, descY, textWidth, detailLineH, detailFontChosen, style.detailColor, "left")
         row.appendChild(descLbl)
     end if
 
