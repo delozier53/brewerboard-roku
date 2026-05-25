@@ -263,16 +263,44 @@ sub renderTapListColumn(beers as dynamic, breweryLogoUrl as dynamic, headers as 
     showDescription = boolField(config, "show_description", false)
     showDividers = boolField(config, "show_row_dividers", true)
 
+    rowStyle = { nameFont: nameFont, detailFont: detailFont, priceFont: priceFont, sizeFont: sizeFont, nameColor: nameColor, detailColor: detailColor, priceColor: priceColor, showLabel: showLabel, showStyle: showStyle, showAbv: showAbv, showIbu: showIbu, showDescription: showDescription, showDividers: showDividers }
+
+    ' Auto-fit: distribute extra vertical space evenly across rows so
+    ' the list naturally fills the column height instead of clumping at
+    ' the top with empty space below. (Roku system fonts come in fixed
+    ' sizes — we can't scale them like the web's --fit-scale, so we
+    ' scale the row padding/logo instead.)
+    naturalRowH = computeNaturalRowHeight(showDescription)
+    availableH = slot.h - y
+    rowH = naturalRowH
+    if availableH > naturalRowH * beers.Count() then
+        rowH = Int(availableH / beers.Count())
+    end if
+    ' Cap the row height growth so logos don't become absurd on short
+    ' beer lists.
+    if rowH > naturalRowH * 2 then rowH = naturalRowH * 2
+
     for i = 0 to beers.Count() - 1
         beer = beers[i]
         isLast = (i = beers.Count() - 1)
-        result = buildBeerRow(beer, breweryLogoUrl, isLast, slot.w, { nameFont: nameFont, detailFont: detailFont, priceFont: priceFont, sizeFont: sizeFont, nameColor: nameColor, detailColor: detailColor, priceColor: priceColor, showLabel: showLabel, showStyle: showStyle, showAbv: showAbv, showIbu: showIbu, showDescription: showDescription, showDividers: showDividers })
+        result = buildBeerRow(beer, breweryLogoUrl, isLast, slot.w, rowH, rowStyle)
         result.node.translation = [0, y]
         container.appendChild(result.node)
         y = y + result.height
         if y > slot.h then exit for
     end for
 end sub
+
+' Returns the natural (no-stretching) height of a beer row given the
+' configured visibility toggles. Used to decide whether the column has
+' room to stretch rows.
+function computeNaturalRowHeight(showDescription as boolean) as integer
+    nameLineH = 36
+    detailLineH = 28
+    contentH = nameLineH + detailLineH  ' assume detail is always shown
+    if showDescription then contentH = contentH + detailLineH
+    return 24 + contentH  ' 12 padding top + 12 padding bottom
+end function
 
 ' Render the header sub-section: 1 or 2 header texts side by side, then
 ' a horizontal divider below. Returns the total height consumed.
@@ -319,7 +347,7 @@ end function
 '   ────────────────────────────────────────────────────────
 '
 ' Returns { node, height } because Group has no settable height field.
-function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boolean, rowWidth as integer, style as object) as object
+function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boolean, rowWidth as integer, targetRowHeight as integer, style as object) as object
     row = CreateObject("roSGNode", "Group")
 
     nameStr = asString(beer.name)
@@ -388,44 +416,51 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     contentH = nameLineH
     if detailLine <> "" then contentH = contentH + detailLineH
     if descLine <> "" then contentH = contentH + detailLineH
-    rowHeight = m.ROW_PADDING_Y + contentH + m.ROW_PADDING_Y
+    naturalH = m.ROW_PADDING_Y + contentH + m.ROW_PADDING_Y
+    rowHeight = naturalH
+    if targetRowHeight > naturalH then rowHeight = targetRowHeight
+
+    ' If the row is stretched, center the content vertically within it.
+    extraPad = Int((rowHeight - naturalH) / 2)
+    topPad = m.ROW_PADDING_Y + extraPad
 
     ' --- Logo image (left) --------------------------------------------
-    logoCenterY = m.ROW_PADDING_Y + Int((contentH - m.LOGO_BOX) / 2)
-    if logoCenterY < m.ROW_PADDING_Y then logoCenterY = m.ROW_PADDING_Y
+    ' Scale the logo proportional to the stretched row height (capped),
+    ' so on tall rows the logo fills the row gracefully instead of
+    ' floating at the top.
+    logoSize = m.LOGO_BOX
+    targetLogo = rowHeight - 20
+    if targetLogo > m.LOGO_BOX and targetLogo < 160 then logoSize = targetLogo
+    if logoSize > 140 then logoSize = 140
+
+    logoCenterY = Int((rowHeight - logoSize) / 2)
+    if logoCenterY < topPad then logoCenterY = topPad
     if labelSrc <> "" then
         poster = CreateObject("roSGNode", "Poster")
         poster.uri = labelSrc
         poster.translation = [leftX, logoCenterY]
-        poster.width = m.LOGO_BOX
-        poster.height = m.LOGO_BOX
+        poster.width = logoSize
+        poster.height = logoSize
         poster.loadDisplayMode = "scaleToFit"
         row.appendChild(poster)
     end if
 
-    ' --- Name + source brewery line -----------------------------------
-    ' Combined into ONE Label rather than two side-by-side, because
-    ' approximating bold-large text width per character (for placing
-    ' the second label) overlapped the two on every row. The web display
-    ' uses flexbox to align them naturally — Roku has no equivalent
-    ' without measuring rendered text via roFont, which adds complexity.
-    ' Single Label trades the source-brewery opacity differentiation
-    ' (web shows it at 70% alpha) for correct, non-overlapping layout.
-    nameY = m.ROW_PADDING_Y
+    ' --- Name + source brewery line (one combined label) --------------
+    nameY = topPad
     nameDisplay = nameStr
     if sourceStr <> "" then nameDisplay = nameStr + "  |  " + sourceStr
     nameLbl = createSimpleLabel(nameDisplay, textX, nameY, textWidth, nameLineH, style.nameFont, style.nameColor, "left")
     row.appendChild(nameLbl)
 
     ' --- Detail line --------------------------------------------------
+    detailY = nameY + nameLineH
     if detailLine <> "" then
-        detailY = nameY + nameLineH
         detailLbl = createSimpleLabel(detailLine, textX, detailY, textWidth, detailLineH, style.detailFont, style.detailColor, "left")
         row.appendChild(detailLbl)
     end if
 
     if descLine <> "" then
-        descY = nameY + nameLineH
+        descY = detailY
         if detailLine <> "" then descY = descY + detailLineH
         descLbl = createSimpleLabel(descLine, textX, descY, textWidth, detailLineH, style.detailFont, style.detailColor, "left")
         row.appendChild(descLbl)
@@ -433,7 +468,7 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
 
     ' --- Size + price stack (right) -----------------------------------
     if pricesEnabled then
-        renderPriceStack(row, pricesList, pricesX, m.PRICES_COL_W, style)
+        renderPriceStack(row, pricesList, pricesX, m.PRICES_COL_W, topPad, style)
     end if
 
     ' --- Per-row divider ----------------------------------------------
@@ -456,11 +491,8 @@ end function
 ' Size + price stacked vertically in the right column. Matches the web
 ' photo: "12oz" above "$5", with the size in white and the price in the
 ' brand yellow.
-sub renderPriceStack(row as object, sizes as object, pricesX as integer, pricesW as integer, style as object)
-    ' Web shows just the first size in the prominent right-stack
-    ' position; additional sizes can come back in v4. For now we list
-    ' all of them top-down on the right edge.
-    y = m.ROW_PADDING_Y
+sub renderPriceStack(row as object, sizes as object, pricesX as integer, pricesW as integer, topPad as integer, style as object)
+    y = topPad
     stackH = 32
     for i = 0 to sizes.Count() - 1
         s = sizes[i]
@@ -492,21 +524,34 @@ sub renderFooter(footers as dynamic, config as object)
         return
     end if
 
-    text = joinStrings(parts, "          •          ") + "          "
+    ' Build the marquee text: messages joined by wide gaps (no bullets),
+    ' with the whole set repeated TWICE in the label text. That gives us
+    ' a seamless loop: we animate the translation by exactly one-set-
+    ' width, and because copy #2 sits where copy #1 was at the end of
+    ' the run, the loop point is visually identical and the user sees
+    ' the first message reappear immediately after the last — no gap.
+    SEP = "                    "  ' 20 spaces between messages
+    singleSet = joinStrings(parts, SEP) + SEP
+    text = singleSet + singleSet
     m.footerText.text = text
     m.footerText.color = configHex(config, "footer_color", "0xFFFFFFFF", 255)
 
-    ' Approximate text width: ~13px per char at MediumSystemFont.
-    estW = Len(text) * 13
-    if estW < 1200 then estW = 1200
+    ' Approximate width of one set. ~13 px per char at MediumSystemFont.
+    oneSetW = Len(singleSet) * 13
+    if oneSetW < 1200 then oneSetW = 1200
 
-    m.tickerInterp.keyValue = [ [1920.0, 20.0], [-estW * 1.0, 20.0] ]
+    ' Animate translation by exactly one-set-width. y=1030 keeps the
+    ' label pinned in the footer bar — the earlier build mistakenly
+    ' passed y=20 here, which is why the marquee was rendering at the
+    ' TOP of the screen instead of the footer.
+    FOOTER_Y = 1030.0
+    m.tickerInterp.keyValue = [ [0.0, FOOTER_Y], [-oneSetW * 1.0, FOOTER_Y] ]
 
     speed = intField(config, "ticker_speed", 150)
     if speed < 30 then speed = 30
-    duration = (1920 + estW) / speed
+    duration = oneSetW / speed
     if duration < 10 then duration = 10
-    if duration > 60 then duration = 60
+    if duration > 120 then duration = 120
     m.tickerAnim.duration = duration
 
     m.tickerAnim.control = "start"

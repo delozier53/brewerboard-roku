@@ -40,9 +40,14 @@
              animation silently failed — all messages rendered at their
              initial positions because the interpolator never fired. -->
         <Rectangle id="footerBg" translation="[0,1010]" width="1920" height="70" color="0x00000033" />
+        <!-- footerText starts at x=0 so the first message is visible
+             immediately on launch. Animation then translates it left by
+             exactly one-set-width; with the message text repeated 2x,
+             copy #2 is at the loop end position, making the wrap
+             seamless. -->
         <Label id="footerText"
             text=""
-            translation="[1920,1030]"
+            translation="[0,1030]"
             font="font:MediumSystemFont"
             color="0xFFFFFFFF" />
 
@@ -55,7 +60,7 @@
             <Vector2DFieldInterpolator
                 id="tickerInterp"
                 key="[0.0, 1.0]"
-                keyValue="[ [1920.0, 1030.0], [-2000.0, 1030.0] ]"
+                keyValue="[ [0.0, 1030.0], [-2000.0, 1030.0] ]"
                 fieldToInterp="footerText.translation" />
         </Animation>
     </children>
