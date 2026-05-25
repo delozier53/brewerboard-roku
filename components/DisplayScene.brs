@@ -305,16 +305,20 @@ end function
 ' Reactive font picker: shrinks the font alias step-by-step until the
 ' approximate rendered width fits within `availableW`. Avoids the "..."
 ' truncation we get when a long combined "Name | Source Brewery" string
-' overflows the column. Char-width constants are rough averages — we
-' can't measure rendered text without an roFont object.
+' overflows the column.
+'
+' Char-width values calibrated against actual Roku TCL on-TV rendering:
+' "Chumy the Whale  |  Skydance Brewing" (36 chars) was truncating at
+' LargeBoldSystemFont in a 672 px column, which puts true avg width at
+' ~21-22 px/char. Previous estimate of 17 was too generous and let the
+' picker skip the down-step. Conservative values now — slight chance
+' of dropping a step too early on the safer side.
 function pickFitFont(text as string, availableW as integer) as string
     n = Len(text)
     if n = 0 then return "font:LargeBoldSystemFont"
-    ' Approx px-per-char per alias (bold). Conservative: better to drop
-    ' a step too early than truncate.
-    if n * 17 <= availableW then return "font:LargeBoldSystemFont"
-    if n * 14 <= availableW then return "font:MediumBoldSystemFont"
-    if n * 11 <= availableW then return "font:SmallBoldSystemFont"
+    if n * 22 <= availableW then return "font:LargeBoldSystemFont"
+    if n * 17 <= availableW then return "font:MediumBoldSystemFont"
+    if n * 13 <= availableW then return "font:SmallBoldSystemFont"
     return "font:SmallBoldSystemFont"
 end function
 
