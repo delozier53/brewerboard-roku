@@ -17,7 +17,12 @@
 
 sub init()
     print "[display] init"
-    m.API_BASE = "https://brewerboard.com"
+    ' Hit the www. host directly. The apex (brewerboard.com) returns a
+    ' 308 redirect to www., which Roku's roUrlTransfer DOES follow but
+    ' some intermediary caches may be holding the redirect target with
+    ' stale data even when the no-store header should prevent it. Using
+    ' the canonical host removes the extra hop entirely.
+    m.API_BASE = "https://www.brewerboard.com"
 
     m.rootBg = m.top.findNode("rootBg")
     m.bodyContainer = m.top.findNode("bodyContainer")
