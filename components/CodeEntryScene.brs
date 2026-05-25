@@ -1,59 +1,84 @@
-' CodeEntryScene — 6-digit pin entry with D-pad keypad navigation.
+' CodeEntryScene — 6-digit pin entry with a custom-rendered D-pad keypad.
 '
-' Layout:
-'   [_] [_] [_] [_] [_] [_]      <- 6 digit slots, fills as user enters
+' Layout (all coordinates in 1920x1080 FHD space):
+'
+'   [_] [_] [_] [_] [_] [_]      <- 6 digit slots
 '
 '    1   2   3
 '    4   5   6
 '    7   8   9
-'   DEL  0   GO              <- 3x4 keypad
+'   DEL  0   GO                  <- 4x3 keypad
 '
-' D-pad moves focus across the keypad; pressing OK on a digit appends it
-' to the code (if fewer than 6); OK on DEL removes last digit; OK on GO
-' submits if the code is full.
-
-' Layout constants live on `m` so init/buildDigitSlots/buildKeypad can share
-' them without a global. (BrightScript SceneGraph .brs files don't permit
-' bare top-level assignments — only sub/function declarations.)
+' Why custom keypad cells instead of SceneGraph's Button node?
+' Button nodes silently mis-render text on some Roku firmware (shows up
+' as a tiny dot on TCL Roku TVs we tested). Rolling our own with
+' Rectangle + Label is more code but renders identically across devices
+' and gives us full control over focus styling.
+'
+' Focus state lives on `m.focusIndex` (0–11). onKeyEvent translates the
+' Roku remote's D-pad into row/col arithmetic and re-renders the focused
+' cell on every change.
 
 sub init()
     print "[entry] init"
     m.code = ""
+    m.focusIndex = 0  ' index into KEYPAD layout below
 
-    m.DIGIT_SLOT_WIDTH = 80
-    m.DIGIT_SLOT_HEIGHT = 100
-    m.DIGIT_SLOT_GAP = 20
+    ' --- Layout constants ----------------------------------------------
+    m.DIGIT_SLOT_WIDTH = 130
+    m.DIGIT_SLOT_HEIGHT = 160
+    m.DIGIT_SLOT_GAP = 16
 
-    m.KEYPAD_BTN_WIDTH = 120
-    m.KEYPAD_BTN_HEIGHT = 100
-    m.KEYPAD_BTN_GAP = 16
+    m.KEYPAD_BTN_WIDTH = 180
+    m.KEYPAD_BTN_HEIGHT = 110
+    m.KEYPAD_BTN_GAP = 20
+    m.KEYPAD_COLS = 3
+    m.KEYPAD_ROWS = 4
 
-    m.KEYPAD_ROWS = ["123", "456", "789", "*0#"]  ' "*" = DEL, "#" = GO
+    ' --- Brand palette -------------------------------------------------
+    ' Amber matches the web app's `--brand` accent. Adjust here if/when
+    ' the brand color changes — every focused element references these.
+    m.BRAND_AMBER = "0xF59E0BFF"
+    m.BRAND_AMBER_SOFT = "0xF59E0B33"  ' 20% alpha for filled-slot bg
+    m.SURFACE_DIM = "0xFFFFFF14"
+    m.SURFACE_FOCUS_BG = "0xF59E0BFF"
+    m.TEXT_ON_FOCUS = "0x0A0A0AFF"
+    m.TEXT_DEFAULT = "0xFFFFFFFF"
+    m.TEXT_MUTED = "0xFFFFFFAA"
+
+    ' --- Keypad data layout --------------------------------------------
+    ' Index order is row-major: indexes 0-2 = row 0, 3-5 = row 1, etc.
+    ' Each entry has a single-char `ch` used both as the visible label
+    ' (transformed via labelFor) and the action key. "*" = DEL, "#" = GO.
+    m.KEYPAD = [
+        { ch: "1" }, { ch: "2" }, { ch: "3" },
+        { ch: "4" }, { ch: "5" }, { ch: "6" },
+        { ch: "7" }, { ch: "8" }, { ch: "9" },
+        { ch: "*" }, { ch: "0" }, { ch: "#" }
+    ]
 
     m.top.setFocus(true)
-    m.top.observeField("focusedChild", "onFocusedChildChanged")
-    m.top.observeFieldScoped("focusedChild", "onFocusedChildChanged")
-
     buildDigitSlots()
     buildKeypad()
     refreshDigitSlots()
+    refreshKeypadFocus()
 end sub
 
-' Draw 6 digit-slot rectangles. Each slot is a Group containing a border
-' Rectangle and a centered Label holding the digit (or empty if unfilled).
+' Render 6 digit slots. Each slot is Group { borderRect + bgRect + label }.
+' Border vs bg gives us a "filled" visual state (amber tint when a digit
+' lives in the slot) without redrawing the layout.
 sub buildDigitSlots()
     row = m.top.findNode("digitRow")
     m.digitSlots = []
     for i = 0 to 5
         slot = CreateObject("roSGNode", "Group")
-        slot.id = "slot" + StrI(i).Trim()
         slot.translation = [i * (m.DIGIT_SLOT_WIDTH + m.DIGIT_SLOT_GAP), 0]
 
         bg = CreateObject("roSGNode", "Rectangle")
         bg.id = "slotBg"
         bg.width = m.DIGIT_SLOT_WIDTH
         bg.height = m.DIGIT_SLOT_HEIGHT
-        bg.color = "0xFFFFFF1A"
+        bg.color = m.SURFACE_DIM
         slot.appendChild(bg)
 
         lbl = CreateObject("roSGNode", "Label")
@@ -64,7 +89,7 @@ sub buildDigitSlots()
         lbl.horizAlign = "center"
         lbl.vertAlign = "center"
         lbl.font = "font:LargeBoldSystemFont"
-        lbl.color = "0xFFFFFFFF"
+        lbl.color = m.TEXT_DEFAULT
         slot.appendChild(lbl)
 
         row.appendChild(slot)
@@ -72,64 +97,89 @@ sub buildDigitSlots()
     end for
 end sub
 
-' Build 4x3 keypad of Button nodes. We use SceneGraph's built-in Button so
-' D-pad focus + OK-press wiring comes for free.
+' Render the 4x3 keypad as custom Group cells. We do NOT use Button —
+' see header comment for the firmware-compat rationale.
 sub buildKeypad()
     grid = m.top.findNode("keypadGroup")
-    m.keypadButtons = []
-    rowIdx = 0
-    for each rowStr in m.KEYPAD_ROWS
-        colIdx = 0
-        for i = 0 to Len(rowStr) - 1
-            ch = Mid(rowStr, i + 1, 1)
-            btn = CreateObject("roSGNode", "Button")
-            btn.id = "btn_" + ch
-            btn.text = keypadLabelFor(ch)
-            btn.minWidth = m.KEYPAD_BTN_WIDTH
-            btn.maxWidth = m.KEYPAD_BTN_WIDTH
-            btn.translation = [colIdx * (m.KEYPAD_BTN_WIDTH + m.KEYPAD_BTN_GAP), rowIdx * (m.KEYPAD_BTN_HEIGHT + m.KEYPAD_BTN_GAP)]
-            btn.observeField("buttonSelected", "onKeypadButtonPressed")
-            grid.appendChild(btn)
-            m.keypadButtons.push({ node: btn, char: ch })
-            colIdx = colIdx + 1
-        end for
-        rowIdx = rowIdx + 1
-    end for
+    m.keypadCells = []
 
-    ' Focus the "1" button by default — top-left of the keypad.
-    if m.keypadButtons.Count() > 0 then
-        m.keypadButtons[0].node.setFocus(true)
-    end if
+    for i = 0 to m.KEYPAD.Count() - 1
+        row = i \ m.KEYPAD_COLS
+        col = i - row * m.KEYPAD_COLS
+        ch = m.KEYPAD[i].ch
+
+        cell = CreateObject("roSGNode", "Group")
+        cell.translation = [col * (m.KEYPAD_BTN_WIDTH + m.KEYPAD_BTN_GAP), row * (m.KEYPAD_BTN_HEIGHT + m.KEYPAD_BTN_GAP)]
+
+        bg = CreateObject("roSGNode", "Rectangle")
+        bg.id = "cellBg"
+        bg.width = m.KEYPAD_BTN_WIDTH
+        bg.height = m.KEYPAD_BTN_HEIGHT
+        bg.color = m.SURFACE_DIM
+        cell.appendChild(bg)
+
+        lbl = CreateObject("roSGNode", "Label")
+        lbl.id = "cellLbl"
+        lbl.text = labelFor(ch)
+        lbl.width = m.KEYPAD_BTN_WIDTH
+        lbl.height = m.KEYPAD_BTN_HEIGHT
+        lbl.horizAlign = "center"
+        lbl.vertAlign = "center"
+        lbl.font = "font:MediumBoldSystemFont"
+        lbl.color = m.TEXT_DEFAULT
+        cell.appendChild(lbl)
+
+        grid.appendChild(cell)
+        m.keypadCells.push({ node: cell, bg: bg, lbl: lbl, ch: ch })
+    end for
 end sub
 
-' Human-readable label for keypad chars. "*" and "#" are sentinel chars
-' for DEL/GO so we can pack the layout into a single per-row string above.
-function keypadLabelFor(ch as string) as string
+' Translate the internal sentinel chars to human labels.
+function labelFor(ch as string) as string
     if ch = "*" then return "DEL"
     if ch = "#" then return "GO"
     return ch
 end function
 
-' Field observer: a keypad button's `buttonSelected` flipped true. Walks
-' m.keypadButtons to find which one fired, then applies its action to
-' m.code and re-renders.
-sub onKeypadButtonPressed()
-    for each entry in m.keypadButtons
-        if entry.node.buttonSelected = true then
-            ' Reset the flag immediately so subsequent presses of the same
-            ' button trigger the observer again.
-            entry.node.buttonSelected = false
-            applyKeypadChar(entry.char)
-            return
+' Repaint every keypad cell's bg/text colors so only the focused one is
+' highlighted. Cheap to call on every D-pad event.
+sub refreshKeypadFocus()
+    for i = 0 to m.keypadCells.Count() - 1
+        cell = m.keypadCells[i]
+        if i = m.focusIndex then
+            cell.bg.color = m.SURFACE_FOCUS_BG
+            cell.lbl.color = m.TEXT_ON_FOCUS
+        else
+            cell.bg.color = m.SURFACE_DIM
+            cell.lbl.color = m.TEXT_DEFAULT
+        end if
+    end for
+end sub
+
+' Paint each digit-slot label + bg based on current m.code. Filled slots
+' get an amber-tinted bg so the user can see at a glance how many digits
+' they've entered, even from across the room.
+sub refreshDigitSlots()
+    for i = 0 to 5
+        slot = m.digitSlots[i]
+        lbl = slot.findNode("slotLbl")
+        bg = slot.findNode("slotBg")
+        if i < Len(m.code) then
+            lbl.text = Mid(m.code, i + 1, 1)
+            bg.color = m.BRAND_AMBER_SOFT
+        else
+            lbl.text = ""
+            bg.color = m.SURFACE_DIM
         end if
     end for
 end sub
 
 sub applyKeypadChar(ch as string)
     if ch = "*" then
+        ' DEL — remove last digit
         if Len(m.code) > 0 then m.code = Left(m.code, Len(m.code) - 1)
     else if ch = "#" then
-        ' Only submit if the code is exactly 6 digits — otherwise ignore.
+        ' GO — submit if full, otherwise ignore
         if Len(m.code) = 6 then
             print "[entry] submitting code: "; m.code
             m.top.submittedCode = m.code
@@ -140,23 +190,35 @@ sub applyKeypadChar(ch as string)
     refreshDigitSlots()
 end sub
 
-' Repaint each digit-slot label + border based on current m.code state.
-sub refreshDigitSlots()
-    for i = 0 to 5
-        slot = m.digitSlots[i]
-        lbl = slot.findNode("slotLbl")
-        bg = slot.findNode("slotBg")
-        if i < Len(m.code) then
-            lbl.text = Mid(m.code, i + 1, 1)
-            bg.color = "0xFFFFFF33"
-        else
-            lbl.text = ""
-            bg.color = "0xFFFFFF1A"
-        end if
-    end for
-end sub
+' Roku remote handling. We track focus ourselves rather than relying on
+' SceneGraph's automatic focus-traversal (which doesn't work cleanly with
+' raw Group children).
+function onKeyEvent(key as string, press as boolean) as boolean
+    if not press then return false
 
-' Optional: react to focus moving around the keypad if we want to add hover
-' state styling later. No-op for now.
-sub onFocusedChildChanged()
-end sub
+    row = m.focusIndex \ m.KEYPAD_COLS
+    col = m.focusIndex - row * m.KEYPAD_COLS
+
+    if key = "up" then
+        if row > 0 then row = row - 1
+    else if key = "down" then
+        if row < m.KEYPAD_ROWS - 1 then row = row + 1
+    else if key = "left" then
+        if col > 0 then col = col - 1
+    else if key = "right" then
+        if col < m.KEYPAD_COLS - 1 then col = col + 1
+    else if key = "OK" or key = "play" then
+        applyKeypadChar(m.KEYPAD[m.focusIndex].ch)
+        return true
+    else if key = "back" then
+        ' Treat BACK as a quick delete shortcut.
+        applyKeypadChar("*")
+        return true
+    else
+        return false
+    end if
+
+    m.focusIndex = row * m.KEYPAD_COLS + col
+    refreshKeypadFocus()
+    return true
+end function

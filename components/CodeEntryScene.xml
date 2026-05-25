@@ -1,55 +1,62 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-  Code entry screen. Renders 6 digit slots and an on-screen numeric keypad
-  the user can navigate with the Roku remote's D-pad. Once 6 digits are
-  entered the "Connect" button activates; pressing OK on it sets
-  `submittedCode` so MainScene can advance.
+  Code entry screen — rewritten to ditch the built-in Button node, which
+  doesn't render its text reliably across Roku firmware versions (was
+  showing up as a tiny dot on a TCL Roku TV). Instead we draw each keypad
+  cell as a Group of Rectangle + Label and handle D-pad focus + OK press
+  in BrightScript via onKeyEvent.
 
-  Design philosophy: don't use the built-in Keyboard node — it shows a
-  full alphanumeric keyboard which is overkill and lets the user enter
-  invalid codes. A 0–9 keypad is also faster on D-pad.
+  Visual hierarchy mirrors the web /display entry page:
+    - BrewerBoard logo (top center)
+    - Title + tagline
+    - 6 large digit slots
+    - 4x3 numeric keypad with custom focusable cells
+    - Help text (single short line)
 -->
 <component name="CodeEntryScene" extends="Group">
 
     <interface>
-        <!-- Set by this scene when user confirms a 6-digit code. MainScene
-             observes this field to advance. -->
         <field id="submittedCode" type="string" alwaysNotify="true" />
     </interface>
 
     <script type="text/brightscript" uri="pkg:/components/CodeEntryScene.brs" />
 
     <children>
-        <!-- Title + tagline, top-center -->
+        <!-- Channel logo (reuses the FHD icon we ship for the home screen) -->
+        <Poster id="logoPoster"
+            uri="pkg:/images/icon_fhd.png"
+            translation="[890,80]"
+            width="140"
+            height="105"
+            loadDisplayMode="scaleToFit" />
+
         <Label id="titleLabel"
             text="BrewerBoard"
-            translation="[760,140]"
-            width="400"
+            translation="[660,210]"
+            width="600"
             horizAlign="center"
             font="font:LargeBoldSystemFont"
             color="0xFFFFFFFF" />
+
         <Label id="taglineLabel"
             text="Enter your 6-digit screen code"
-            translation="[660,220]"
-            width="600"
-            horizAlign="center"
-            color="0xFFFFFF80" />
-
-        <!-- 6 digit slot rectangles, drawn dynamically in BRS init() so we
-             can re-style focused/filled states from code. Position is
-             centered around x=960. -->
-        <Group id="digitRow" translation="[660,320]" />
-
-        <!-- On-screen 0–9 keypad (3x4 grid: 1-9 then [Del,0,Connect]). Built
-             in init() so we can attach observers per-button. -->
-        <Group id="keypadGroup" translation="[760,520]" />
-
-        <!-- Helper text at the bottom -->
-        <Label id="helpLabel"
-            text="Use the remote's D-pad to navigate, press OK to select"
-            translation="[560,980]"
+            translation="[560,290]"
             width="800"
             horizAlign="center"
-            color="0xFFFFFF40" />
+            font="font:MediumSystemFont"
+            color="0xFFFFFF99" />
+
+        <!-- Digit-slot row, populated by buildDigitSlots() -->
+        <Group id="digitRow" translation="[510,380]" />
+
+        <!-- Custom keypad grid, populated by buildKeypad() -->
+        <Group id="keypadGroup" translation="[660,580]" />
+
+        <Label id="helpLabel"
+            text="D-pad to move, OK to select"
+            translation="[460,1010]"
+            width="1000"
+            horizAlign="center"
+            color="0xFFFFFF55" />
     </children>
 </component>
