@@ -386,22 +386,40 @@ end sub
 
 ' ----- Color + font helpers ----------------------------------------------
 
-' Build a custom-sized font node. Use SystemFont (not Font) so we don't
-' need to ship a TTF — SystemFont uses Roku's built-in OS font and
-' accepts a custom `size` and `style` ("regular" / "bold" / etc.).
+' Pick the system-font alias closest to the requested px size. Roku's
+' system-font aliases are strings (resolved by the renderer), come in
+' fixed sizes, and work everywhere — unlike the Font node (which needs
+' a real TTF uri) and SystemFont (which doesn't exist on all firmware,
+' confirmed missing on TCL Roku TVs).
 '
-' Earlier this function created a `Font` node with uri = "common:/Fonts/
-' Roboto-Bold.ttf", which silently fails on TVs that don't have that
-' exact font file — Labels then render to empty space with no error.
-function makeFont(size as integer, bold as boolean) as object
-    font = CreateObject("roSGNode", "SystemFont")
-    font.size = size
-    if bold then
-        font.style = "bold"
-    else
-        font.style = "regular"
+' Approximate alias sizes (vary slightly by device):
+'   small   ~16,  small-bold   ~16
+'   medium  ~21,  medium-bold  ~21
+'   large   ~28,  large-bold   ~28
+'   largest ~36,  largest-bold ~36
+'   huge    ~48,  huge-bold    ~48
+'
+' Shipping a TTF (e.g. Roboto, or one of the brand fonts the web uses)
+' would let us hit any pixel size — deferred to v3.
+function makeFont(size as integer, bold as boolean) as string
+    if size >= 48 then
+        if bold then return "font:HugeBoldSystemFont"
+        return "font:HugeSystemFont"
     end if
-    return font
+    if size >= 32 then
+        if bold then return "font:LargestBoldSystemFont"
+        return "font:LargestSystemFont"
+    end if
+    if size >= 24 then
+        if bold then return "font:LargeBoldSystemFont"
+        return "font:LargeSystemFont"
+    end if
+    if size >= 18 then
+        if bold then return "font:MediumBoldSystemFont"
+        return "font:MediumSystemFont"
+    end if
+    if bold then return "font:SmallBoldSystemFont"
+    return "font:SmallSystemFont"
 end function
 
 ' Read a #RRGGBB-style hex color from config and turn it into Roku's
