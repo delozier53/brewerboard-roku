@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-  DisplayScene — taplist render. Matches the web display's "image panel +
-  taplist column" layout when the operator has columns=2 + a column
-  image set, and reads colors / visibility toggles from screen.config.
+  DisplayScene — taplist render that mirrors the web display layout:
+    ┌────────────────────────┬────────────────────────────────────┐
+    │                        │  Header 1     |     Header 2        │
+    │   Column image         │  ──────────────────────────────     │
+    │   (slideshow)          │  [logo]  Beer Name | Brewery   12oz │
+    │                        │          Style · ABV · IBU      $5  │
+    │                        │  ──────────────────────────────     │
+    │                        │  ...                                │
+    └────────────────────────┴────────────────────────────────────┘
+       this is a sample      here's another one      anniversary
 
-  Layout decisions all live in computeLayout() in the .brs file — XML
-  just exposes the nodes we mutate at runtime.
+  Headers live INSIDE the tap-list panel (not as a global header
+  bar), matching the web. No brewery logo in the chrome. No "Live"
+  status indicator. The 3-message footer is rendered as a scrolling
+  marquee using an Animation node.
 -->
 <component name="DisplayScene" extends="Group">
 
@@ -17,52 +26,35 @@
     <script type="text/brightscript" uri="pkg:/components/DisplayScene.brs" />
 
     <children>
-        <!-- Full-screen bg whose color we override from
-             screen.config.background_color once a payload arrives. -->
         <Rectangle id="rootBg" width="1920" height="1080" color="0x1C1917FF" />
 
-        <!-- Header bar: just centered text. Dropped the brewery logo
-             (web display doesn't show one in the header) and the "Live"
-             status indicator (was operator-distracting noise). -->
-        <Rectangle id="headerBg" width="1920" height="100" color="0x00000040" />
-        <Label id="headerText"
-            text=""
-            translation="[0,30]"
-            width="1920"
-            horizAlign="center"
-            font="font:LargestBoldSystemFont"
-            color="0xFFFFFFFF" />
+        <!-- Body container spans the full screen above the footer.
+             All panels (image, tap list) are appended here at runtime
+             and cleared on every render. -->
+        <Group id="bodyContainer" translation="[0,0]" />
 
-        <!-- Body container — image panel and/or beer columns get appended
-             here at runtime. Cleared on every render. -->
-        <Group id="bodyContainer" translation="[0,120]" />
-
-        <!-- Footer bar + ticker. The Label sits inside a clipping Group
-             so we can scroll the text off-screen on both sides. -->
-        <Rectangle id="footerBg" translation="[0,1020]" width="1920" height="60" color="0x00000040" />
-        <Group id="footerClip" translation="[0,1020]" >
+        <!-- Footer marquee. The label sits at translation x=1920 (off
+             the right edge) and gets animated left to 0 - textWidth so
+             the messages glide across the bottom. -->
+        <Group id="footerClip" translation="[0,1010]">
+            <Rectangle id="footerBg" width="1920" height="70" color="0x00000033" />
             <Label id="footerText"
                 text=""
-                translation="[1920,15]"
+                translation="[1920,20]"
                 font="font:MediumSystemFont"
                 color="0xFFFFFFFF" />
         </Group>
 
-        <!-- Polling timer — fires every 30s to refetch the payload. -->
         <Timer id="refreshTimer"
             repeat="true"
             duration="30"
             control="start" />
 
-        <!-- Ticker animation. Translates the footer label horizontally
-             from off-screen-right to off-screen-left, then loops. We
-             rebuild the Vector2DFieldInterpolator's keyValue at runtime
-             once we know the rendered text width. -->
         <Animation id="tickerAnim" duration="20" repeat="true" easeFunction="linear">
             <Vector2DFieldInterpolator
                 id="tickerInterp"
                 key="[0.0, 1.0]"
-                keyValue="[ [1920.0, 15.0], [-2000.0, 15.0] ]"
+                keyValue="[ [1920.0, 20.0], [-2000.0, 20.0] ]"
                 fieldToInterp="footerText.translation" />
         </Animation>
     </children>
