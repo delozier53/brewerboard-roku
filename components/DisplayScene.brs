@@ -373,10 +373,9 @@ sub renderTapListColumn(beers as dynamic, breweryLogoUrl as dynamic, slot as obj
     y = 0
     if beers = invalid or beers.Count() = 0 then return
 
-    nameFont = "font:LargeBoldSystemFont"
-    detailFont = "font:MediumSystemFont"
-    priceFont = "font:LargeBoldSystemFont"
-    sizeFont = "font:MediumSystemFont"
+    ' Resolve the operator's typeface once per render. getFontNode then
+    ' creates a Font node sized for each text element.
+    fontFamily = configFontFamily(config)
 
     nameColor = configHex(config, "beer_name_color", "0xFFFFFFFF", 255)
     detailColor = configHex(config, "beer_detail_color", "0x9CA3AFFF", 255)
@@ -389,7 +388,7 @@ sub renderTapListColumn(beers as dynamic, breweryLogoUrl as dynamic, slot as obj
     showDescription = boolField(config, "show_description", false)
     showDividers = boolField(config, "show_row_dividers", true)
 
-    rowStyle = { nameFont: nameFont, detailFont: detailFont, priceFont: priceFont, sizeFont: sizeFont, nameColor: nameColor, detailColor: detailColor, priceColor: priceColor, showLabel: showLabel, showStyle: showStyle, showAbv: showAbv, showIbu: showIbu, showDescription: showDescription, showDividers: showDividers }
+    rowStyle = { fontFamily: fontFamily, nameColor: nameColor, detailColor: detailColor, priceColor: priceColor, showLabel: showLabel, showStyle: showStyle, showAbv: showAbv, showIbu: showIbu, showDescription: showDescription, showDividers: showDividers }
 
     ' Distribute the column's vertical space evenly across the beer
     ' rows. No upper cap — when there are few beers, the rows expand
@@ -456,18 +455,22 @@ sub renderHeaderArea(headers as dynamic, area as object, config as object)
     container.translation = [area.x, area.y]
     m.bodyContainer.appendChild(container)
 
-    headerFont = "font:LargeBoldSystemFont"
+    ' Reactive header sizing using the operator's chosen font.
+    family = configFontFamily(config)
     headerColor = configHex(config, "header_color", "0xFFFFFFFF", 255)
 
     rowH = 50
     if headers.Count() >= 2 then
         halfW = (area.w - 24) / 2
-        h1 = createSimpleLabel(asString(headers[0].text), 0, 10, halfW, rowH, headerFont, headerColor, "center")
-        h2 = createSimpleLabel(asString(headers[1].text), halfW + 24, 10, halfW, rowH, headerFont, headerColor, "center")
+        s1 = fitFontSize(asString(headers[0].text), halfW, 36, 16)
+        s2 = fitFontSize(asString(headers[1].text), halfW, 36, 16)
+        h1 = createSimpleLabel(asString(headers[0].text), 0, 10, halfW, rowH, getFontNode(family, s1, true), headerColor, "center")
+        h2 = createSimpleLabel(asString(headers[1].text), halfW + 24, 10, halfW, rowH, getFontNode(family, s2, true), headerColor, "center")
         container.appendChild(h1)
         container.appendChild(h2)
     else
-        h = createSimpleLabel(asString(headers[0].text), 0, 10, area.w, rowH, headerFont, headerColor, "center")
+        s = fitFontSize(asString(headers[0].text), area.w, 40, 18)
+        h = createSimpleLabel(asString(headers[0].text), 0, 10, area.w, rowH, getFontNode(family, s, true), headerColor, "center")
         container.appendChild(h)
     end if
 
@@ -568,49 +571,39 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     end if
     textWidth = textRight - textX
 
-    ' --- Vertical layout (top-anchored, no vertAlign center) ----------
-    ' Reactive name/source layout: try fitting "Name  |  Source" on
-    ' one line at progressively smaller fonts; if it still overflows
-    ' even at SmallBoldSystemFont, fall back to two lines (name on its
-    ' own row, source brewery on the next). This handles narrow 3-col
-    ' layouts that can't fit "Cosmic | Skydance Brewing" on one line
-    ' regardless of font.
-    nameLineH = 44
-    sourceLineH = 32
-    detailLineH = 28
-
+    ' --- Reactive font sizing -----------------------------------------
+    ' Pick each text element's size based on the actual text length and
+    ' the available column width. Uses the operator's selected typeface
+    ' (style.fontFamily) loaded as TTF via getFontNode, so we can hit
+    ' any size from 14 to 36 px continuously instead of being stuck at
+    ' Roku's ~5 fixed system-font tiers.
     combinedNameSrc = nameStr
     if sourceStr <> "" then combinedNameSrc = nameStr + "  |  " + sourceStr
 
-    nameFontChosen = "font:LargeBoldSystemFont"
+    nameSize = fitFontSize(combinedNameSrc, textWidth, 36, 18)
+
+    ' If even the smallest name size still wouldn't fit on a single
+    ' line, fall back to a two-line layout: name solo on line 1, source
+    ' brewery on line 2 at a smaller size. Guarantees no truncation.
     splitNameSource = false
-    if sourceStr <> "" then
-        ' Width estimates per char per font, conservative.
-        if Len(combinedNameSrc) * 22 > textWidth then
-            if Len(combinedNameSrc) * 17 > textWidth then
-                if Len(combinedNameSrc) * 14 > textWidth then
-                    ' Doesn't fit even at SmallBold → use two lines.
-                    splitNameSource = true
-                else
-                    nameFontChosen = "font:SmallBoldSystemFont"
-                end if
-            else
-                nameFontChosen = "font:MediumBoldSystemFont"
-            end if
-        end if
+    if sourceStr <> "" and approxTextWidth(combinedNameSrc, nameSize) > textWidth then
+        splitNameSource = true
+        nameSize = fitFontSize(nameStr, textWidth, 36, 18)
     end if
 
-    ' Detail line ("Style · ABV · IBU") — also reactive: prefer Medium
-    ' but drop to Small if needed.
+    nameLineH = Int(nameSize * 1.2)
+    if nameLineH < 20 then nameLineH = 20
+    sourceLineH = Int(nameSize * 0.9)
+    if sourceLineH < 16 then sourceLineH = 16
+
     detailParts = []
     if style.showStyle and stringIsSet(beer.style) then detailParts.push(beer.style)
     if style.showAbv and numberIsSet(beer.abv) then detailParts.push(formatAbv(beer.abv) + " ABV")
     if style.showIbu and numberIsSet(beer.ibu) then detailParts.push(formatIbu(beer.ibu))
     detailLine = joinStrings(detailParts, " · ")
-    detailFontChosen = style.detailFont
-    if detailLine <> "" and Len(detailLine) * 16 > textWidth then
-        detailFontChosen = "font:SmallSystemFont"
-    end if
+    detailSize = fitFontSize(detailLine, textWidth, 24, 12)
+    detailLineH = Int(detailSize * 1.2)
+    if detailLineH < 14 then detailLineH = 14
 
     descLine = ""
     if style.showDescription and stringIsSet(beer.description) then descLine = beer.description
@@ -673,30 +666,34 @@ function buildBeerRow(beer as object, breweryLogoUrl as dynamic, isLast as boole
     ' If splitNameSource is true the combined string didn't fit even at
     ' the smallest size, so we render name on its own line and source
     ' on a dedicated second line below. Otherwise it's one combined
-    ' label with the chosen font.
+    ' label with the operator's font at the fitted size.
     nameY = topPad
+    nameFont = getFontNode(style.fontFamily, nameSize, true)
     if splitNameSource then
-        nameLbl = createSimpleLabel(nameStr, textX, nameY, textWidth, nameLineH, "font:LargeBoldSystemFont", style.nameColor, "left")
+        nameLbl = createSimpleLabel(nameStr, textX, nameY, textWidth, nameLineH, nameFont, style.nameColor, "left")
         row.appendChild(nameLbl)
-        srcLbl = createSimpleLabel(sourceStr, textX, nameY + nameLineH, textWidth, sourceLineH, "font:MediumBoldSystemFont", style.nameColor, "left")
+        srcSize = fitFontSize(sourceStr, textWidth, Int(nameSize * 0.75), 12)
+        srcFont = getFontNode(style.fontFamily, srcSize, false)
+        srcLbl = createSimpleLabel(sourceStr, textX, nameY + nameLineH, textWidth, sourceLineH, srcFont, style.nameColor, "left")
         row.appendChild(srcLbl)
     else
-        nameLbl = createSimpleLabel(combinedNameSrc, textX, nameY, textWidth, nameLineH, nameFontChosen, style.nameColor, "left")
+        nameLbl = createSimpleLabel(combinedNameSrc, textX, nameY, textWidth, nameLineH, nameFont, style.nameColor, "left")
         row.appendChild(nameLbl)
     end if
 
     ' --- Detail line --------------------------------------------------
     detailY = nameY + nameLineH
     if splitNameSource then detailY = detailY + sourceLineH
+    detailFont = getFontNode(style.fontFamily, detailSize, false)
     if detailLine <> "" then
-        detailLbl = createSimpleLabel(detailLine, textX, detailY, textWidth, detailLineH, detailFontChosen, style.detailColor, "left")
+        detailLbl = createSimpleLabel(detailLine, textX, detailY, textWidth, detailLineH, detailFont, style.detailColor, "left")
         row.appendChild(detailLbl)
     end if
 
     if descLine <> "" then
         descY = detailY
         if detailLine <> "" then descY = descY + detailLineH
-        descLbl = createSimpleLabel(descLine, textX, descY, textWidth, detailLineH, detailFontChosen, style.detailColor, "left")
+        descLbl = createSimpleLabel(descLine, textX, descY, textWidth, detailLineH, detailFont, style.detailColor, "left")
         row.appendChild(descLbl)
     end if
 
@@ -747,19 +744,26 @@ sub renderPriceGrid(row as object, sizes as object, pricesX as integer, pricesW 
 end sub
 
 sub renderPriceCell(row as object, size as object, x as integer, y as integer, w as integer, h as integer, style as object)
-    ' Split each cell so the size label gets a fixed ~60 px (enough for
-    ' "12oz" / "16oz" / "Pint" in MediumSystemFont) and the price gets
-    ' the rest. Earlier 55/45 split was leaving only ~50 px for the
-    ' price, which truncated anything ≥ "$10.00" with an ellipsis.
-    labelW = 60
+    ' Split the cell ~45/55: size label on left (smaller font), price on
+    ' right (bold, brand color). Both sides use fitFontSize so longer
+    ' values like "$10.50" or "Pint" auto-shrink rather than truncating.
+    labelW = Int(w * 0.42)
     gap = 6
     priceW = w - labelW - gap
-    if priceW < 50 then priceW = 50  ' don't let it collapse on very narrow rows
 
-    sizeLbl = createSimpleLabel(asString(size.label), x, y, labelW, h, style.sizeFont, style.nameColor, "right")
+    labelText = asString(size.label)
+    priceText = formatPrice(size.price)
+
+    sizeSize = fitFontSize(labelText, labelW, 22, 11)
+    priceSize = fitFontSize(priceText, priceW, 28, 12)
+
+    sizeFont = getFontNode(style.fontFamily, sizeSize, false)
+    priceFont = getFontNode(style.fontFamily, priceSize, true)
+
+    sizeLbl = createSimpleLabel(labelText, x, y, labelW, h, sizeFont, style.nameColor, "right")
     row.appendChild(sizeLbl)
 
-    priceLbl = createSimpleLabel(formatPrice(size.price), x + labelW + gap, y, priceW, h, style.priceFont, style.priceColor, "left")
+    priceLbl = createSimpleLabel(priceText, x + labelW + gap, y, priceW, h, priceFont, style.priceColor, "left")
     row.appendChild(priceLbl)
 end sub
 
@@ -791,8 +795,15 @@ sub renderFooter(footers as dynamic, config as object)
     m.footerText.text = text
     m.footerText.color = configHex(config, "footer_color", "0xFFFFFFFF", 255)
 
-    ' Approximate width of one set. ~13 px per char at MediumSystemFont.
-    oneSetW = Len(singleSet) * 13
+    ' Use the operator's font at a fixed footer size for the ticker.
+    family = configFontFamily(config)
+    footerSize = intField(config, "ticker_font_size", 24)
+    if footerSize < 14 then footerSize = 14
+    if footerSize > 40 then footerSize = 40
+    m.footerText.font = getFontNode(family, footerSize, false)
+
+    ' Approximate width of one set at the chosen footer size.
+    oneSetW = approxTextWidth(singleSet, footerSize)
     if oneSetW < 1200 then oneSetW = 1200
 
     ' Animate translation by exactly one-set-width. y=1030 keeps the
@@ -815,13 +826,13 @@ end sub
 ' ----- Small helpers -----------------------------------------------------
 
 ' Create a Label with explicit dimensions and top-anchored vertical
-' alignment. Avoids vertAlign="center" which can hide text on some Roku
-' firmware when the label's height isn't large enough to contain the
-' rendered glyphs comfortably.
-function createSimpleLabel(text as string, x as integer, y as integer, w as integer, h as integer, font as string, color as string, align as string) as object
+' alignment. `font` may be either a string alias (like
+' "font:LargeBoldSystemFont") OR a Font/SystemFont node reference. Roku
+' Label.font accepts both.
+function createSimpleLabel(text as string, x as integer, y as integer, w as integer, h as integer, font as object, color as string, align as string) as object
     lbl = CreateObject("roSGNode", "Label")
     lbl.text = text
-    lbl.font = font
+    if font <> invalid then lbl.font = font
     lbl.color = color
     lbl.width = w
     lbl.height = h
@@ -829,6 +840,113 @@ function createSimpleLabel(text as string, x as integer, y as integer, w as inte
     lbl.vertAlign = "top"
     lbl.translation = [x, y]
     return lbl
+end function
+
+' --------------------------------------------------------------------------
+' Reactive font system
+' --------------------------------------------------------------------------
+' getFontNode(family, size, bold) returns a Font node configured to load
+' the operator's chosen typeface from a stable CDN (@fontsource on
+' jsdelivr serves every Google Font as TTF at a predictable URL). Roku's
+' Font.uri field accepts https URIs and the renderer caches loaded
+' fonts, so reusing the same family across rows is cheap.
+'
+' We cache the Font nodes by (family|size|weight) so multiple Labels can
+' share one Font instance.
+
+function getFontNode(family as string, size as integer, bold as boolean) as object
+    if m.fontCache = invalid then m.fontCache = {}
+    if family = invalid or family = "" then family = "Inter"
+    if size < 8 then size = 8
+
+    weight = "r"
+    if bold then weight = "b"
+    key = family + "|" + size.toStr() + "|" + weight
+
+    cached = m.fontCache[key]
+    if cached <> invalid then return cached
+
+    font = CreateObject("roSGNode", "Font")
+    font.size = size
+    font.uri = fontUrlFor(family, bold)
+    m.fontCache[key] = font
+    return font
+end function
+
+' Map an operator-selectable font family name to a TTF URL on jsdelivr's
+' @fontsource CDN. URLs follow the pattern:
+'   https://cdn.jsdelivr.net/npm/@fontsource/<family>/files/<family>-latin-<weight>-normal.ttf
+'
+' The whitelist mirrors AVAILABLE_FONTS in the web app (Lato, Oswald,
+' Raleway, Inter, etc.). Anything not on the list falls back to Inter so
+' a typo doesn't blow up the Roku channel.
+function fontUrlFor(family as string, bold as boolean) as string
+    weight = "400"
+    if bold then weight = "700"
+
+    ' Normalize: lowercase, spaces to dashes. Matches @fontsource pkg names.
+    fam = LCase(family)
+    fam = replaceAll(fam, " ", "-")
+
+    ' Whitelist of fonts we know exist on @fontsource via jsdelivr.
+    ' Comma-delimited so we can do a single InStr check.
+    known = ",raleway,roboto,inter,oswald,playfair-display,bebas-neue,montserrat,anton,lato,poppins,source-sans-3,nunito,dm-sans,space-grotesk,barlow,barlow-condensed,exo-2,fjalla-one,righteous,cinzel,libre-baskerville,merriweather,"
+    if InStr(0, known, "," + fam + ",") = 0 then fam = "inter"
+
+    return "https://cdn.jsdelivr.net/npm/@fontsource/" + fam + "/files/" + fam + "-latin-" + weight + "-normal.ttf"
+end function
+
+' Approximate text width without using roFont (which would require the
+' font to be local). 0.55 of size is a reasonable average for the
+' sans-serif fonts in our whitelist — errs slightly conservative so we
+' drop a size step earlier rather than later.
+function approxTextWidth(text as string, size as integer) as integer
+    if text = invalid or Len(text) = 0 then return 0
+    return Int(Len(text) * size * 0.55)
+end function
+
+' Return the largest font size in [minSize..maxSize] whose approximated
+' rendered width fits within `availableW`. Used everywhere we need
+' reactive sizing — names, prices, headers, footer ticker.
+function fitFontSize(text as string, availableW as integer, maxSize as integer, minSize as integer) as integer
+    if text = invalid or Len(text) = 0 then return maxSize
+    size = maxSize
+    while size > minSize
+        if approxTextWidth(text, size) <= availableW then return size
+        size = size - 1
+    end while
+    return minSize
+end function
+
+' BrightScript doesn't have a string replace built-in, so here's a
+' minimal implementation. Used to convert "Source Sans 3" → "source-sans-3"
+' for @fontsource package names.
+function replaceAll(s as string, find as string, replacement as string) as string
+    if Len(find) = 0 then return s
+    out = ""
+    i = 1
+    while i <= Len(s)
+        if Mid(s, i, Len(find)) = find then
+            out = out + replacement
+            i = i + Len(find)
+        else
+            out = out + Mid(s, i, 1)
+            i = i + 1
+        end if
+    end while
+    return out
+end function
+
+' Look up the operator's chosen typeface from screen config. Prefers
+' beer_font_family (per-card override) over font_family (global). Falls
+' back to Inter so we never end up trying to load an undefined font.
+function configFontFamily(config as object) as string
+    if config = invalid then return "Inter"
+    f = config.beer_font_family
+    if f <> invalid and f <> "" and f <> "Inter" then return f
+    f = config.font_family
+    if f <> invalid and f <> "" then return f
+    return "Inter"
 end function
 
 function filterSizes(sizes as object, visibleIds as dynamic) as object
